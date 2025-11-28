@@ -104,8 +104,12 @@ class EditorWidget(QWidget):
         self.polygon_item = None
         self.is_closed = False
         self.editing_item = None 
+        self.rect_preview = None
 
         self.view.clicked.connect(self.on_view_clicked)
+        # Track mouse move for Rect Mode preview
+        self.view.mouseMoved.connect(self.on_view_mouse_moved)
+        self.view.leftReleased.connect(self.on_view_left_released)
 
     def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None):
         self.current_image_path = filepath
@@ -128,6 +132,7 @@ class EditorWidget(QWidget):
         self.points = []
         self.polygon_item = None
         self.is_closed = False
+        self.rect_preview = None
         self.scene.update_polygon_callback = self.update_polygon
         self.scene.delete_point_callback = self.delete_point
         
@@ -140,6 +145,49 @@ class EditorWidget(QWidget):
             self.handle_rect_click(pos)
         else:
             self.add_point(pos)
+
+    def on_view_mouse_moved(self, pos):
+        # Live preview only in Rect Mode after first point
+        if not self.rect_mode_chk.isChecked():
+            return
+        if len(self.points) != 1 or self.is_closed:
+            return
+
+        p1 = self.points[0].pos()
+        p2 = pos
+        x1, y1 = p1.x(), p1.y()
+        x2, y2 = p2.x(), p2.y()
+
+        # Enforce square when Shift held
+        if QGuiApplication.keyboardModifiers() & Qt.ShiftModifier:
+            dx = x2 - x1
+            dy = y2 - y1
+            size = max(abs(dx), abs(dy))
+            sign_x = 1 if dx >= 0 else -1
+            sign_y = 1 if dy >= 0 else -1
+            x2 = x1 + size * sign_x
+            y2 = y1 + size * sign_y
+
+        preview_poly = QPolygonF([
+            QPointF(x1, y1),
+            QPointF(x2, y1),
+            QPointF(x2, y2),
+            QPointF(x1, y2)
+        ])
+
+        if self.rect_preview:
+            self.scene.removeItem(self.rect_preview)
+
+        pen = QPen(Qt.green, 1, Qt.DashLine)
+        brush = QBrush(QColor(0, 255, 0, 40))
+        self.rect_preview = self.scene.addPolygon(preview_poly, pen, brush)
+        self.rect_preview.setZValue(0.4)
+
+    def on_view_left_released(self, pos):
+        # Clear preview if user cancels rect creation (e.g., deselects mode)
+        if self.rect_preview and (not self.rect_mode_chk.isChecked() or self.is_closed or len(self.points) != 1):
+            self.scene.removeItem(self.rect_preview)
+            self.rect_preview = None
 
     def handle_rect_click(self, pos):
         if len(self.points) >= 4 and self.is_closed:
@@ -168,6 +216,10 @@ class EditorWidget(QWidget):
             self.add_point(QPointF(x1, y2))
             
             self.is_closed = True
+            # Remove preview once finalized
+            if self.rect_preview:
+                self.scene.removeItem(self.rect_preview)
+                self.rect_preview = None
             self.update_polygon()
 
     def add_point(self, pos):

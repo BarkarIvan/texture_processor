@@ -4,6 +4,8 @@ from PySide6.QtGui import QPainter
 
 class ZoomPanView(QGraphicsView):
     clicked = Signal(QPointF) # Emits scene pos on left click
+    mouseMoved = Signal(QPointF) # Emits scene pos on move with left button
+    leftReleased = Signal(QPointF) # Emits scene pos on left release
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
@@ -51,6 +53,11 @@ class ZoomPanView(QGraphicsView):
                 self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
                 self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
                 event.accept()
+        elif event.buttons() & Qt.LeftButton:
+            # Propagate movement for background interactions (e.g., rect preview)
+            scene_pos = self.mapToScene(event.pos())
+            self.mouseMoved.emit(scene_pos)
+            super().mouseMoveEvent(event)
         else:
             super().mouseMoveEvent(event)
 
@@ -58,4 +65,7 @@ class ZoomPanView(QGraphicsView):
         if event.button() == Qt.MiddleButton:
             self.setCursor(Qt.ArrowCursor)
             self._last_pan_pos = None
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.mapToScene(event.pos())
+            self.leftReleased.emit(scene_pos)
         super().mouseReleaseEvent(event)

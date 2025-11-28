@@ -18,7 +18,13 @@ class AtlasItem(QGraphicsPixmapItem):
 
     def paint(self, painter, option, widget):
         super().paint(painter, option, widget)
-        # Draw border
+
+        # Skip overlays during export to avoid artifacts on the final image
+        scene = self.scene()
+        if scene and getattr(scene, "exporting", False):
+            return
+
+        # Draw border in editor view
         pen = QPen(Qt.blue, 0, Qt.DashLine) # Width 0 = Cosmetic (1px on screen)
         painter.setPen(pen)
         painter.drawRect(self.boundingRect())
@@ -33,9 +39,14 @@ class CanvasScene(QGraphicsScene):
         super().__init__(x, y, w, h, parent)
         self.grid_enabled = False
         self.grid_step = 512.0 # Default density
+        self.exporting = False
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
+
+        # Hide all overlays during export
+        if self.exporting:
+            return
         
         scene_rect = self.sceneRect()
         
@@ -200,6 +211,9 @@ class CanvasWidget(QWidget):
         self.scene.setBackgroundBrush(Qt.NoBrush)
         old_grid = self.scene.grid_enabled
         self.scene.grid_enabled = False
+        # Hide overlays while exporting
+        old_exporting = self.scene.exporting
+        self.scene.exporting = True
         
         selected_items = self.scene.selectedItems()
         for item in selected_items:
@@ -212,6 +226,7 @@ class CanvasWidget(QWidget):
         # Restore
         self.scene.setBackgroundBrush(old_bg)
         self.scene.grid_enabled = old_grid
+        self.scene.exporting = old_exporting
         for item in selected_items:
             item.setSelected(True)
             

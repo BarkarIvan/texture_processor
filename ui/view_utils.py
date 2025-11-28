@@ -10,6 +10,8 @@ class ZoomPanView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        # Full viewport updates prevent paint trails when dragging items
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self._last_pan_pos = None
 
     def wheelEvent(self, event):

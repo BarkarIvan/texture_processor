@@ -98,7 +98,8 @@ class MainWindow(QMainWindow):
         self.project_data['atlas_size'] = size
 
     def on_grid_toggled(self, state):
-        self.canvas.set_grid_visible(state == Qt.Checked)
+        checked = Qt.CheckState(state) == Qt.CheckState.Checked
+        self.canvas.set_grid_visible(checked)
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")

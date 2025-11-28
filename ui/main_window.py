@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox
+from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 from .browser_widget import BrowserWidget
@@ -28,6 +28,16 @@ class MainWindow(QMainWindow):
         self.density_input.setSuffix(" px/m")
         self.density_input.valueChanged.connect(self.on_density_changed)
         self.toolbar.addWidget(self.density_input)
+        
+        self.grid_chk = QCheckBox("Show Grid")
+        self.grid_chk.stateChanged.connect(self.on_grid_toggled)
+        self.toolbar.addWidget(self.grid_chk)
+        
+        self.size_combo = QComboBox()
+        self.size_combo.addItems(["1024", "2048", "3072", "4096"])
+        self.size_combo.setCurrentText("2048")
+        self.size_combo.currentTextChanged.connect(self.on_size_changed)
+        self.toolbar.addWidget(self.size_combo)
 
         self.toolbar.addSeparator()
         
@@ -69,6 +79,7 @@ class MainWindow(QMainWindow):
         # Connections
         self.browser.image_selected.connect(self.on_image_selected)
         self.editor.mask_applied.connect(self.on_mask_applied)
+        self.canvas.item_edit_requested.connect(self.on_item_edit_requested)
         
         # Data
         self.project_data = {'textures': {}, 'items': []}
@@ -80,23 +91,40 @@ class MainWindow(QMainWindow):
 
     def on_density_changed(self, value):
         self.canvas.set_atlas_density(value)
+        
+    def on_size_changed(self, text):
+        size = int(text)
+        self.canvas.set_canvas_size(size)
+        self.project_data['atlas_size'] = size
+
+    def on_grid_toggled(self, state):
+        self.canvas.set_grid_visible(state == Qt.Checked)
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
         data = self.project_data['textures'].get(filepath, {})
         points = data.get('points')
         width = data.get('real_width')
-        self.editor.load_image(filepath, points, width)
+        self.editor.load_image(filepath, points, width) # Clears editing_item
         
-    def on_mask_applied(self, filepath, points, real_width, original_width):
+    def on_item_edit_requested(self, item):
+        # Load item into editor
+        self.editor.load_image(item.filepath, item.points, item.real_width, item)
+        
+    def on_mask_applied(self, filepath, points, real_width, original_width, item_ref):
         # Update data
         self.project_data['textures'][filepath] = {
             'points': points,
             'real_width': real_width,
             'original_width': original_width
         }
-        # Add to canvas
-        self.canvas.add_fragment(filepath, points, real_width, original_width)
+        
+        if item_ref:
+            # Update existing item
+            self.canvas.update_item(item_ref, points, real_width, original_width)
+        else:
+            # Add new item
+            self.canvas.add_fragment(filepath, points, real_width, original_width)
 
     def save_project(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
@@ -120,6 +148,13 @@ class MainWindow(QMainWindow):
             if base_path and os.path.exists(base_path):
                 self.browser.load_images(base_path)
             
+            # Restore settings
+            self.density_input.setValue(self.project_data.get('atlas_density', 512.0))
+            
+            atlas_size = self.project_data.get('atlas_size', 2048)
+            self.size_combo.setCurrentText(str(atlas_size))
+            self.canvas.set_canvas_size(atlas_size)
+
             # Restore canvas
             self.canvas.scene.clear()
             for filepath, data in self.project_data.get('textures', {}).items():

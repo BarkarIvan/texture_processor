@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QGuiApplication
 from PySide6.QtCore import Qt, QPointF, Signal, QRectF
 from .view_utils import ZoomPanView
 
@@ -152,6 +152,16 @@ class EditorWidget(QWidget):
             p2 = pos
             x1, y1 = p1.x(), p1.y()
             x2, y2 = p2.x(), p2.y()
+
+            # If Shift is held, enforce a square (use the larger delta)
+            if QGuiApplication.keyboardModifiers() & Qt.ShiftModifier:
+                dx = x2 - x1
+                dy = y2 - y1
+                size = max(abs(dx), abs(dy))
+                sign_x = 1 if dx >= 0 else -1
+                sign_y = 1 if dy >= 0 else -1
+                x2 = x1 + size * sign_x
+                y2 = y1 + size * sign_y
             
             self.add_point(QPointF(x2, y1))
             self.add_point(QPointF(x2, y2))

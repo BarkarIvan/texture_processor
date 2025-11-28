@@ -1,6 +1,9 @@
+from collections import OrderedDict
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
+from PIL import Image
+from PIL.ImageQt import ImageQt
 from .view_utils import ZoomPanView
 
 class AtlasItem(QGraphicsPixmapItem):
@@ -9,6 +12,7 @@ class AtlasItem(QGraphicsPixmapItem):
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
+        self.setTransformationMode(Qt.SmoothTransformation) # Better scaling quality
         
         # Metadata
         self.filepath = None
@@ -110,6 +114,8 @@ class CanvasWidget(QWidget):
         
         self.atlas_density = 512.0
         self.scene.grid_step = self.atlas_density
+        self._lanczos_cache = OrderedDict() # (path, rect, target_size) -> QImage
+        self._cache_limit = 32
         
         self.scene.selectionChanged.connect(self.on_selection_changed)
 
@@ -119,7 +125,7 @@ class CanvasWidget(QWidget):
         self.scene.update() # Redraw grid
         for item in self.scene.items():
             if isinstance(item, AtlasItem):
-                self.update_item_scale(item)
+                self.regenerate_item_pixmap(item)
 
     def set_canvas_size(self, size):
         self.scene.setSceneRect(0, 0, size, size)
@@ -129,46 +135,78 @@ class CanvasWidget(QWidget):
         self.scene.grid_enabled = visible
         self.scene.update()
 
-    def update_item_scale(self, item):
-        if item.real_width and item.original_width:
-            # Scale = (Atlas Density * Real Width) / Original Width
-            # Example: Atlas=1000px/m, Real Width=2m, Orig=1000px
-            # Target Size on Atlas = 2m * 1000px/m = 2000px
-            # Scale = 2000 / 1000 = 2.0
-            scale = (self.atlas_density * item.real_width) / item.original_width
-            item.setScale(scale)
+    def regenerate_item_pixmap(self, item):
+        if item.filepath and item.points and item.real_width and item.original_width:
+            pixmap = self.create_masked_pixmap(item.filepath, item.points, item.real_width, item.original_width)
+            if pixmap:
+                item.setPixmap(pixmap)
+                item.setScale(1.0)
 
     def on_selection_changed(self):
         selected = self.scene.selectedItems()
         if len(selected) == 1 and isinstance(selected[0], AtlasItem):
             self.item_edit_requested.emit(selected[0])
 
-    def create_masked_pixmap(self, image_path, points):
-        src_pixmap = QPixmap(image_path)
-        if src_pixmap.isNull():
+    def _get_lanczos_crop(self, image_path, rect, target_size):
+        key = (image_path, rect.left(), rect.top(), rect.width(), rect.height(), target_size[0], target_size[1])
+        if key in self._lanczos_cache:
+            self._lanczos_cache.move_to_end(key)
+            return self._lanczos_cache[key]
+        
+        try:
+            img = Image.open(image_path).convert("RGBA")
+            box = (rect.left(), rect.top(), rect.left() + rect.width(), rect.top() + rect.height())
+            cropped = img.crop(box)
+            resized = cropped.resize(target_size, Image.LANCZOS)
+            qimg = ImageQt(resized).copy() # Detach from PIL buffer
+        except Exception:
             return None
 
+        self._lanczos_cache[key] = qimg
+        if len(self._lanczos_cache) > self._cache_limit:
+            self._lanczos_cache.popitem(last=False)
+        return qimg
+
+    def create_masked_pixmap(self, image_path, points, real_width, original_width):
         poly = QPolygonF([QPointF(x, y) for x, y in points])
-        bounding_rect = poly.boundingRect().toRect()
+        bounding_rect = poly.boundingRect().toAlignedRect()
         
-        target_image = QImage(bounding_rect.size(), QImage.Format_ARGB32)
+        if bounding_rect.width() <= 0 or bounding_rect.height() <= 0:
+            return None
+        
+        # Compute target size on atlas using density
+        scale_factor = (self.atlas_density * real_width) / original_width
+        target_w = max(1, int(round(bounding_rect.width() * scale_factor)))
+        target_h = max(1, int(round(bounding_rect.height() * scale_factor)))
+        
+        # Get Lanczos-resized crop
+        src_qimage = self._get_lanczos_crop(image_path, bounding_rect, (target_w, target_h))
+        if src_qimage is None:
+            return None
+
+        src_pixmap = QPixmap.fromImage(src_qimage)
+        target_image = QImage(target_w, target_h, QImage.Format_ARGB32)
         target_image.fill(Qt.transparent)
         
         painter = QPainter(target_image)
         painter.setRenderHint(QPainter.Antialiasing)
         
         path = QPainterPath()
-        translated_poly = poly.translated(-bounding_rect.topLeft())
-        path.addPolygon(translated_poly)
+        # Scale polygon to the target size
+        scaled_points = [
+            QPointF((x - bounding_rect.left()) * scale_factor, (y - bounding_rect.top()) * scale_factor)
+            for x, y in points
+        ]
+        path.addPolygon(QPolygonF(scaled_points))
         
         painter.setClipPath(path)
-        painter.drawPixmap(-bounding_rect.x(), -bounding_rect.y(), src_pixmap)
+        painter.drawPixmap(0, 0, src_pixmap)
         painter.end()
         
         return QPixmap.fromImage(target_image)
 
     def add_fragment(self, image_path, points, real_width, original_width):
-        pixmap = self.create_masked_pixmap(image_path, points)
+        pixmap = self.create_masked_pixmap(image_path, points, real_width, original_width)
         if not pixmap: return
 
         item = AtlasItem(pixmap)
@@ -185,10 +223,10 @@ class CanvasWidget(QWidget):
         item.setData(Qt.UserRole + 2, original_width)
         
         self.scene.addItem(item)
-        self.update_item_scale(item)
+        item.setScale(1.0)
 
     def update_item(self, item, points, real_width, original_width):
-        pixmap = self.create_masked_pixmap(item.filepath, points)
+        pixmap = self.create_masked_pixmap(item.filepath, points, real_width, original_width)
         if not pixmap: return
         
         item.setPixmap(pixmap)
@@ -199,7 +237,7 @@ class CanvasWidget(QWidget):
         item.setData(Qt.UserRole + 1, real_width)
         item.setData(Qt.UserRole + 2, original_width)
         
-        self.update_item_scale(item)
+        item.setScale(1.0)
 
     def export_atlas(self, filename):
         rect = self.scene.sceneRect()

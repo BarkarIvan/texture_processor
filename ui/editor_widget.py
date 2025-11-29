@@ -61,7 +61,7 @@ class HandleItem(QGraphicsEllipseItem):
                 self.scene().delete_point_callback(self)
 
 class EditorWidget(QWidget):
-    mask_applied = Signal(str, list, float, int, object) # filepath, points, real_width, original_width, item_ref
+    mask_applied = Signal(str, list, float, int, object, object) # filepath, points, real_width, original_width, item_ref, mask_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -131,16 +131,18 @@ class EditorWidget(QWidget):
         self.scale_mode_active = False
         self.scale_points = []
         self.scale_line = None
+        self.current_mask_id = None
 
         self.view.clicked.connect(self.on_view_clicked)
         # Track mouse move for Rect Mode preview
         self.view.mouseMoved.connect(self.on_view_mouse_moved)
         self.view.leftReleased.connect(self.on_view_left_released)
 
-    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None):
+    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None):
         self.current_image_path = filepath
         self.editing_item = item_ref
         self.clear_mask()
+        self.current_mask_id = mask_id
         
         pixmap = QPixmap(filepath)
         self.current_image_item = self.scene.addPixmap(pixmap)
@@ -167,6 +169,7 @@ class EditorWidget(QWidget):
         self.scale_mode_active = False
         self.scale_points = []
         self.scale_line = None
+        self.current_mask_id = None
         self.scene.update_polygon_callback = self.update_polygon
         self.scene.delete_point_callback = self.delete_point
         
@@ -369,4 +372,4 @@ class EditorWidget(QWidget):
         poly = QPolygonF([p.pos() for p in self.points])
         original_width = poly.boundingRect().width()
         
-        self.mask_applied.emit(self.current_image_path, points, real_width, original_width, self.editing_item)
+        self.mask_applied.emit(self.current_image_path, points, real_width, original_width, self.editing_item, self.current_mask_id)

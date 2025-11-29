@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication
 from .browser_widget import BrowserWidget
 from .editor_widget import EditorWidget
-from .canvas_widget import CanvasWidget
+from .canvas_widget import CanvasWidget, AtlasItem
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -118,33 +118,68 @@ class MainWindow(QMainWindow):
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
-        data = self.project_data['textures'].get(filepath, {})
-        points = data.get('points')
-        width = data.get('real_width')
+        data = self.project_data['textures'].setdefault(filepath, {'px_per_meter': None, 'masks': []})
         px_per_meter = data.get('px_per_meter')
-        self.editor.load_image(filepath, points, width, px_per_meter=px_per_meter) # Clears editing_item
+        # For new mask creation, start blank but keep scale info if available
+        self.editor.load_image(filepath, None, None, px_per_meter=px_per_meter) # Clears editing_item
         
     def on_item_edit_requested(self, item):
         # Load item into editor
-        data = self.project_data['textures'].get(item.filepath, {})
+        data = self.project_data['textures'].setdefault(item.filepath, {'px_per_meter': None, 'masks': []})
         px_per_meter = data.get('px_per_meter')
-        self.editor.load_image(item.filepath, item.points, item.real_width, item, px_per_meter)
+        mask_entry = None
+        for m in data.get('masks', []):
+            if m.get('id') == getattr(item, 'mask_id', None):
+                mask_entry = m
+                break
+        points = mask_entry.get('points') if mask_entry else item.points
+        real_width = mask_entry.get('real_width') if mask_entry else item.real_width
+        original_width = mask_entry.get('original_width') if mask_entry else item.original_width
+        self.editor.load_image(item.filepath, points, real_width, item, px_per_meter, getattr(item, 'mask_id', None))
         
-    def on_mask_applied(self, filepath, points, real_width, original_width, item_ref):
-        # Update data
-        self.project_data['textures'][filepath] = {
-            'points': points,
-            'real_width': real_width,
-            'original_width': original_width,
-            'px_per_meter': self.editor.px_per_meter
-        }
-        
+    def on_mask_applied(self, filepath, points, real_width, original_width, item_ref, mask_id):
+        # Ensure texture entry
+        tex_entry = self.project_data['textures'].setdefault(filepath, {
+            'px_per_meter': self.editor.px_per_meter,
+            'masks': []
+        })
+        if self.editor.px_per_meter:
+            tex_entry['px_per_meter'] = self.editor.px_per_meter
+
+        if mask_id is None:
+            if item_ref:
+                mask_id = getattr(item_ref, 'mask_id', None)
+            else:
+                mask_id = self.editor.current_mask_id
+
+        # Update existing mask or create new
+        existing = None
+        for m in tex_entry['masks']:
+            if m.get('id') == mask_id:
+                existing = m
+                break
+
+        if existing:
+            existing['points'] = points
+            existing['real_width'] = real_width
+            existing['original_width'] = original_width
+        else:
+            # Assign new id
+            next_id = max([m.get('id', 0) for m in tex_entry['masks']] + [0]) + 1
+            mask_id = next_id
+            tex_entry['masks'].append({
+                'id': mask_id,
+                'points': points,
+                'real_width': real_width,
+                'original_width': original_width
+            })
+
         if item_ref:
-            # Update existing item
-            self.canvas.update_item(item_ref, points, real_width, original_width, show_progress=True)
+            item_ref.mask_id = mask_id
+            self.canvas.update_item(item_ref, points, real_width, original_width, mask_id=mask_id, show_progress=True)
         else:
             # Add new item
-            self.canvas.add_fragment(filepath, points, real_width, original_width, show_progress=True)
+            self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=mask_id, show_progress=True)
 
     def save_project(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
@@ -152,6 +187,17 @@ class MainWindow(QMainWindow):
             import json
             self.project_data['base_path'] = self.browser.current_folder
             self.project_data['atlas_density'] = self.density_input.value()
+            # Capture item positions
+            items_data = []
+            for it in self.canvas.scene.items():
+                if isinstance(it, AtlasItem):
+                    items_data.append({
+                        'filepath': it.filepath,
+                        'mask_id': getattr(it, 'mask_id', None),
+                        'x': it.pos().x(),
+                        'y': it.pos().y()
+                    })
+            self.project_data['items'] = items_data
             with open(filepath, 'w') as f:
                 json.dump(self.project_data, f, indent=4)
 
@@ -164,6 +210,20 @@ class MainWindow(QMainWindow):
             import os
             with open(filepath, 'r') as f:
                 self.project_data = json.load(f)
+
+            # Normalize legacy texture data to new masks list
+            textures = self.project_data.get('textures', {})
+            for tex_path, data in list(textures.items()):
+                if 'masks' not in data:
+                    textures[tex_path] = {
+                        'px_per_meter': data.get('px_per_meter'),
+                        'masks': [{
+                            'id': 1,
+                            'points': data.get('points'),
+                            'real_width': data.get('real_width'),
+                            'original_width': data.get('original_width')
+                        }]
+                    }
             
             base_path = self.project_data.get('base_path')
             if base_path and os.path.exists(base_path):
@@ -194,12 +254,28 @@ class MainWindow(QMainWindow):
                 dlg.setWindowModality(Qt.ApplicationModal)
                 dlg.setMinimumDuration(0)
                 dlg.show()
+            item_map = {}
             for idx, (filepath, data) in enumerate(tex_items, start=1):
-                points = data.get('points')
-                real_width = data.get('real_width')
-                original_width = data.get('original_width')
-                if points:
-                    self.canvas.add_fragment(filepath, points, real_width, original_width, show_progress=True)
+                masks = data.get('masks')
+                if masks:
+                    for m in masks:
+                        points = m.get('points')
+                        real_width = m.get('real_width')
+                        original_width = m.get('original_width')
+                        mask_id = m.get('id')
+                        if points:
+                            item = self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=mask_id, show_progress=True)
+                            if item:
+                                item_map[(filepath, mask_id)] = item
+                else:
+                    # Legacy single mask structure
+                    points = data.get('points')
+                    real_width = data.get('real_width')
+                    original_width = data.get('original_width')
+                    if points:
+                        item = self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=1, show_progress=True)
+                        if item:
+                            item_map[(filepath, 1)] = item
                 if dlg:
                     dlg.setValue(idx)
                     QApplication.processEvents()
@@ -207,6 +283,13 @@ class MainWindow(QMainWindow):
                         break
             if dlg:
                 dlg.close()
+
+            # Restore positions
+            for entry in self.project_data.get('items', []):
+                key = (entry.get('filepath'), entry.get('mask_id'))
+                item = item_map.get(key)
+                if item:
+                    item.setPos(entry.get('x', 0), entry.get('y', 0))
 
     def export_atlas(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export Atlas", "", "PNG Files (*.png)")

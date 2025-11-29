@@ -20,6 +20,7 @@ class AtlasItem(QGraphicsPixmapItem):
         self.points = None
         self.real_width = None
         self.original_width = None
+        self.mask_id = None
 
     def paint(self, painter, option, widget):
         super().paint(painter, option, widget)
@@ -76,8 +77,8 @@ class CanvasScene(QGraphicsScene):
         step = self.grid_step
         if step <= 0: return
 
-        # Use Cyan for better visibility
-        pen = QPen(QColor(0, 255, 255, 200), 0) 
+        # Subtle light grid
+        pen = QPen(QColor(200, 200, 200, 120), 0) 
         painter.setPen(pen)
         
         # print(f"Drawing grid: step={step}, rect={draw_rect}") # Debug
@@ -328,7 +329,7 @@ class CanvasWidget(QWidget):
             out = out[:, :, 0]
         return Image.fromarray(out, mode=image.mode)
 
-    def add_fragment(self, image_path, points, real_width, original_width, show_progress=False):
+    def add_fragment(self, image_path, points, real_width, original_width, mask_id=None, show_progress=False):
         def build():
             return self.create_masked_pixmap(image_path, points, real_width, original_width)
 
@@ -352,6 +353,7 @@ class CanvasWidget(QWidget):
         item.points = points
         item.real_width = real_width
         item.original_width = original_width
+        item.mask_id = mask_id
         
         # Legacy support for scale logic (using data)
         item.setData(Qt.UserRole + 1, real_width)
@@ -359,8 +361,9 @@ class CanvasWidget(QWidget):
         
         self.scene.addItem(item)
         item.setScale(1.0)
+        return item
 
-    def update_item(self, item, points, real_width, original_width, show_progress=False):
+    def update_item(self, item, points, real_width, original_width, mask_id=None, show_progress=False):
         def build():
             return self.create_masked_pixmap(item.filepath, points, real_width, original_width)
 
@@ -380,6 +383,8 @@ class CanvasWidget(QWidget):
         item.points = points
         item.real_width = real_width
         item.original_width = original_width
+        if mask_id is not None:
+            item.mask_id = mask_id
         
         item.setData(Qt.UserRole + 1, real_width)
         item.setData(Qt.UserRole + 2, original_width)

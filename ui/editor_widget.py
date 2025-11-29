@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu
+import math
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QGuiApplication
 from PySide6.QtCore import Qt, QPointF, Signal, QRectF
 from .view_utils import ZoomPanView
@@ -7,11 +8,12 @@ class HandleItem(QGraphicsEllipseItem):
     def __init__(self, x, y, r, parent=None):
         super().__init__(-r, -r, r*2, r*2, parent)
         self.setPos(x, y)
-        self.setPen(QPen(Qt.yellow))
+        self.setPen(QPen(Qt.yellow, 0))  # Cosmetic width
         self.setBrush(QBrush(Qt.red))
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)  # Keep marker size constant on zoom
         self.radius = r
 
     def shape(self):
@@ -78,8 +80,28 @@ class EditorWidget(QWidget):
         self.clear_btn.clicked.connect(self.clear_mask)
         tools_layout.addWidget(self.clear_btn)
 
-        self.rect_mode_chk = QCheckBox("Rect Mode")
-        tools_layout.addWidget(self.rect_mode_chk)
+        # Tool buttons
+        self.tool_group = QButtonGroup(self)
+        self.tool_group.setExclusive(True)
+
+        self.poly_tool = QToolButton()
+        self.poly_tool.setText("Polygon")
+        self.poly_tool.setCheckable(True)
+        self.poly_tool.setChecked(True)
+        tools_layout.addWidget(self.poly_tool)
+        self.tool_group.addButton(self.poly_tool)
+
+        self.rect_tool = QToolButton()
+        self.rect_tool.setText("Rect")
+        self.rect_tool.setCheckable(True)
+        tools_layout.addWidget(self.rect_tool)
+        self.tool_group.addButton(self.rect_tool)
+
+        self.scale_btn = QToolButton()
+        self.scale_btn.setText("Set 1m")
+        self.scale_btn.setCheckable(True)
+        self.scale_btn.clicked.connect(self.start_scale_mode)
+        tools_layout.addWidget(self.scale_btn)
         
         self.width_input = QDoubleSpinBox()
         self.width_input.setRange(0.1, 1000.0)
@@ -105,13 +127,17 @@ class EditorWidget(QWidget):
         self.is_closed = False
         self.editing_item = None 
         self.rect_preview = None
+        self.px_per_meter = None
+        self.scale_mode_active = False
+        self.scale_points = []
+        self.scale_line = None
 
         self.view.clicked.connect(self.on_view_clicked)
         # Track mouse move for Rect Mode preview
         self.view.mouseMoved.connect(self.on_view_mouse_moved)
         self.view.leftReleased.connect(self.on_view_left_released)
 
-    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None):
+    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None):
         self.current_image_path = filepath
         self.editing_item = item_ref
         self.clear_mask()
@@ -119,6 +145,8 @@ class EditorWidget(QWidget):
         pixmap = QPixmap(filepath)
         self.current_image_item = self.scene.addPixmap(pixmap)
         self.view.fitInView(self.current_image_item, Qt.KeepAspectRatio)
+
+        self.px_per_meter = px_per_meter
         
         if existing_width:
             self.width_input.setValue(existing_width)
@@ -127,12 +155,18 @@ class EditorWidget(QWidget):
             for p in existing_points:
                 self.add_point(QPointF(p[0], p[1]))
 
+        # If scale known and points exist, recompute width automatically
+        self.update_width_from_scale()
+
     def clear_mask(self):
         self.scene.clear()
         self.points = []
         self.polygon_item = None
         self.is_closed = False
         self.rect_preview = None
+        self.scale_mode_active = False
+        self.scale_points = []
+        self.scale_line = None
         self.scene.update_polygon_callback = self.update_polygon
         self.scene.delete_point_callback = self.delete_point
         
@@ -141,14 +175,59 @@ class EditorWidget(QWidget):
             self.current_image_item = self.scene.addPixmap(pixmap)
 
     def on_view_clicked(self, pos):
-        if self.rect_mode_chk.isChecked():
+        # If we are setting scale, handle separately
+        if self.scale_mode_active:
+            self.handle_scale_click(pos)
+            return
+
+        if self.rect_tool.isChecked():
             self.handle_rect_click(pos)
         else:
             self.add_point(pos)
 
+    def start_scale_mode(self):
+        # User will click two points that represent 1 meter on the texture
+        if not self.current_image_path:
+            return
+        self.scale_mode_active = True
+        self.scale_points = []
+        self.scale_btn.setChecked(True)
+        if self.scale_line:
+            self.scene.removeItem(self.scale_line)
+            self.scale_line = None
+
+    def handle_scale_click(self, pos):
+        if not self.scale_mode_active:
+            return
+        self.scale_points.append(pos)
+        if len(self.scale_points) == 2:
+            p1, p2 = self.scale_points
+            length_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
+            if length_px > 0:
+                self.px_per_meter = length_px
+                # Visual line
+                if self.scale_line:
+                    self.scene.removeItem(self.scale_line)
+            pen = QPen(QColor(255, 0, 255), 0, Qt.DashLine)  # Cosmetic
+            self.scale_line = self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
+            self.scale_line.setZValue(0.6)
+            self.update_width_from_scale()
+            self.scale_mode_active = False
+            self.scale_points = []
+            self.scale_btn.setChecked(False)
+        else:
+            # show a temporary dot/line start
+            if self.scale_line:
+                self.scene.removeItem(self.scale_line)
+            pen = QPen(QColor(255, 0, 255), 0, Qt.DashLine)  # Cosmetic
+            self.scale_line = self.scene.addLine(pos.x(), pos.y(), pos.x(), pos.y(), pen)
+            self.scale_line.setZValue(0.6)
+
     def on_view_mouse_moved(self, pos):
         # Live preview only in Rect Mode after first point
-        if not self.rect_mode_chk.isChecked():
+        if self.scale_mode_active:
+            return
+        if not self.rect_tool.isChecked():
             return
         if len(self.points) != 1 or self.is_closed:
             return
@@ -178,14 +257,14 @@ class EditorWidget(QWidget):
         if self.rect_preview:
             self.scene.removeItem(self.rect_preview)
 
-        pen = QPen(Qt.green, 1, Qt.DashLine)
+        pen = QPen(Qt.green, 0, Qt.DashLine)  # Cosmetic width
         brush = QBrush(QColor(0, 255, 0, 40))
         self.rect_preview = self.scene.addPolygon(preview_poly, pen, brush)
         self.rect_preview.setZValue(0.4)
 
     def on_view_left_released(self, pos):
         # Clear preview if user cancels rect creation (e.g., deselects mode)
-        if self.rect_preview and (not self.rect_mode_chk.isChecked() or self.is_closed or len(self.points) != 1):
+        if self.rect_preview and (not self.rect_tool.isChecked() or self.is_closed or len(self.points) != 1):
             self.scene.removeItem(self.rect_preview)
             self.rect_preview = None
 
@@ -233,18 +312,20 @@ class EditorWidget(QWidget):
             y = round(pos.y() / grid_size) * grid_size
             pos = QPointF(x, y)
 
-        radius = 5.0 
+        radius = 4.0 
         handle = HandleItem(pos.x(), pos.y(), radius)
         self.scene.addItem(handle)
         
         self.points.append(handle)
         self.update_polygon()
+        self.update_width_from_scale()
 
     def delete_point(self, handle_item):
         if handle_item in self.points:
             self.points.remove(handle_item)
             self.scene.removeItem(handle_item)
             self.update_polygon()
+            self.update_width_from_scale()
 
     def update_polygon(self):
         if not self.points:
@@ -255,11 +336,24 @@ class EditorWidget(QWidget):
         if self.polygon_item:
             self.scene.removeItem(self.polygon_item)
             
-        self.polygon_item = self.scene.addPolygon(QPolygonF(poly_points), QPen(Qt.green, 2), QBrush(QColor(0, 255, 0, 50)))
+        self.polygon_item = self.scene.addPolygon(QPolygonF(poly_points), QPen(Qt.green, 0), QBrush(QColor(0, 255, 0, 50)))
         self.polygon_item.setZValue(0.5)
         
         for h in self.points:
             h.setZValue(1)
+        
+        # If scale known, refresh real width automatically
+        self.update_width_from_scale()
+
+    def update_width_from_scale(self):
+        if not self.px_per_meter or not self.points:
+            return
+        poly = QPolygonF([p.pos() for p in self.points])
+        width_px = poly.boundingRect().width()
+        if width_px <= 0:
+            return
+        real_width = width_px / self.px_per_meter
+        self.width_input.setValue(real_width)
 
     def apply_mask(self):
         if len(self.points) < 3:

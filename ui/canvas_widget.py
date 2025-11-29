@@ -1,5 +1,6 @@
 from collections import OrderedDict
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem
+import numpy as np
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image
@@ -116,16 +117,34 @@ class CanvasWidget(QWidget):
         self.scene.grid_step = self.atlas_density
         self._lanczos_cache = OrderedDict() # (path, rect, target_size) -> QImage
         self._cache_limit = 32
+        self.resample_mode = "lanczos" # "lanczos" or "kaiser"
+        self.kaiser_beta = 3.0
+        self.kaiser_radius = 2
         
         self.scene.selectionChanged.connect(self.on_selection_changed)
 
-    def set_atlas_density(self, density):
+    def set_atlas_density(self, density, show_progress=False):
         self.atlas_density = density
         self.scene.grid_step = density
         self.scene.update() # Redraw grid
-        for item in self.scene.items():
-            if isinstance(item, AtlasItem):
-                self.regenerate_item_pixmap(item)
+        if show_progress:
+            self.rebuild_items_with_progress("Updating density...")
+        else:
+            for item in self.scene.items():
+                if isinstance(item, AtlasItem):
+                    self.regenerate_item_pixmap(item)
+
+    def set_resample_settings(self, mode, beta=None, radius=None):
+        if mode not in ("lanczos", "kaiser"):
+            return
+        self.resample_mode = mode
+        if beta is not None:
+            self.kaiser_beta = beta
+        if radius is not None:
+            self.kaiser_radius = radius
+        # Clear cache and rebuild items to apply new filter
+        self._lanczos_cache.clear()
+        self.rebuild_items_with_progress("Resampling items...")
 
     def set_canvas_size(self, size):
         self.scene.setSceneRect(0, 0, size, size)
@@ -142,13 +161,50 @@ class CanvasWidget(QWidget):
                 item.setPixmap(pixmap)
                 item.setScale(1.0)
 
+    def _run_single_with_progress(self, title, func):
+        dlg = QProgressDialog(title, None, 0, 0, self)
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        QApplication.processEvents()
+        func()
+        dlg.close()
+
+    def rebuild_items_with_progress(self, title):
+        items = [i for i in self.scene.items() if isinstance(i, AtlasItem)]
+        total = len(items)
+        if total == 0:
+            return
+        dlg = QProgressDialog(title, None, 0, total, self)
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        for idx, item in enumerate(items, start=1):
+            QApplication.processEvents()
+            self.regenerate_item_pixmap(item)
+            dlg.setValue(idx)
+            if dlg.wasCanceled():
+                break
+        dlg.close()
+
     def on_selection_changed(self):
         selected = self.scene.selectedItems()
         if len(selected) == 1 and isinstance(selected[0], AtlasItem):
             self.item_edit_requested.emit(selected[0])
 
-    def _get_lanczos_crop(self, image_path, rect, target_size):
-        key = (image_path, rect.left(), rect.top(), rect.width(), rect.height(), target_size[0], target_size[1])
+    def _get_resampled_crop(self, image_path, rect, target_size):
+        key = (
+            image_path,
+            rect.left(),
+            rect.top(),
+            rect.width(),
+            rect.height(),
+            target_size[0],
+            target_size[1],
+            self.resample_mode,
+            round(self.kaiser_beta, 3),
+            int(self.kaiser_radius),
+        )
         if key in self._lanczos_cache:
             self._lanczos_cache.move_to_end(key)
             return self._lanczos_cache[key]
@@ -157,7 +213,10 @@ class CanvasWidget(QWidget):
             img = Image.open(image_path).convert("RGBA")
             box = (rect.left(), rect.top(), rect.left() + rect.width(), rect.top() + rect.height())
             cropped = img.crop(box)
-            resized = cropped.resize(target_size, Image.LANCZOS)
+            if self.resample_mode == "kaiser":
+                resized = self._kaiser_resize(cropped, target_size, self.kaiser_radius, self.kaiser_beta)
+            else:
+                resized = cropped.resize(target_size, Image.LANCZOS)
             qimg = ImageQt(resized).copy() # Detach from PIL buffer
         except Exception:
             return None
@@ -179,8 +238,8 @@ class CanvasWidget(QWidget):
         target_w = max(1, int(round(bounding_rect.width() * scale_factor)))
         target_h = max(1, int(round(bounding_rect.height() * scale_factor)))
         
-        # Get Lanczos-resized crop
-        src_qimage = self._get_lanczos_crop(image_path, bounding_rect, (target_w, target_h))
+        # Get resampled crop (Lanczos or Kaiser)
+        src_qimage = self._get_resampled_crop(image_path, bounding_rect, (target_w, target_h))
         if src_qimage is None:
             return None
 
@@ -205,9 +264,85 @@ class CanvasWidget(QWidget):
         
         return QPixmap.fromImage(target_image)
 
-    def add_fragment(self, image_path, points, real_width, original_width):
-        pixmap = self.create_masked_pixmap(image_path, points, real_width, original_width)
-        if not pixmap: return
+    def _kaiser_resize(self, image: Image.Image, target_size, radius: int, beta: float) -> Image.Image:
+        """Resize using separable Kaiser-windowed sinc filter."""
+        src = np.array(image, dtype=np.float32)
+        if src.ndim == 2:
+            src = src[:, :, None]
+        src_h, src_w, channels = src.shape
+        tgt_w, tgt_h = target_size
+        if tgt_w <= 0 or tgt_h <= 0:
+            return image
+        if tgt_w == src_w and tgt_h == src_h:
+            return image
+
+        taps = 2 * radius + 1
+
+        def kaiser_weight(dist):
+            """dist: array, |dist| <= radius."""
+            mask = np.abs(dist) <= radius
+            out = np.zeros_like(dist, dtype=np.float32)
+            # Kaiser window
+            ratio = np.zeros_like(dist, dtype=np.float32)
+            ratio[mask] = dist[mask] / radius
+            window = np.zeros_like(dist, dtype=np.float32)
+            window[mask] = np.i0(beta * np.sqrt(1 - ratio[mask] ** 2)) / np.i0(beta)
+            out[mask] = np.sinc(dist[mask]) * window[mask]
+            return out
+
+        # Horizontal weights/indices
+        src_x = (np.arange(tgt_w) + 0.5) * src_w / tgt_w - 0.5
+        offsets = np.arange(-radius, radius + 1)
+        idx_x = np.floor(src_x[:, None] + offsets).astype(int)
+        idx_x = np.clip(idx_x, 0, src_w - 1)
+        dist_x = src_x[:, None] - idx_x
+        w_x = kaiser_weight(dist_x)
+        w_x_sum = w_x.sum(axis=1, keepdims=True)
+        w_x = np.divide(w_x, w_x_sum, out=np.zeros_like(w_x), where=w_x_sum != 0)
+
+        # Horizontal resample
+        tmp = np.empty((src_h, tgt_w, channels), dtype=np.float32)
+        for y in range(src_h):
+            row = src[y]  # (src_w, ch)
+            gathered = row[idx_x]  # (tgt_w, taps, ch)
+            tmp[y] = np.sum(gathered * w_x[:, :, None], axis=1)
+
+        # Vertical weights/indices
+        src_y = (np.arange(tgt_h) + 0.5) * src_h / tgt_h - 0.5
+        idx_y = np.floor(src_y[:, None] + offsets).astype(int)
+        idx_y = np.clip(idx_y, 0, src_h - 1)
+        dist_y = src_y[:, None] - idx_y
+        w_y = kaiser_weight(dist_y)
+        w_y_sum = w_y.sum(axis=1, keepdims=True)
+        w_y = np.divide(w_y, w_y_sum, out=np.zeros_like(w_y), where=w_y_sum != 0)
+
+        # Vertical resample
+        out = np.empty((tgt_h, tgt_w, channels), dtype=np.float32)
+        for x in range(tgt_w):
+            col = tmp[:, x, :]  # (src_h, ch)
+            gathered = col[idx_y]  # (tgt_h, taps, ch)
+            out[:, x, :] = np.sum(gathered * w_y[:, :, None], axis=1)
+
+        out = np.clip(out, 0, 255).astype(np.uint8)
+        if channels == 1:
+            out = out[:, :, 0]
+        return Image.fromarray(out, mode=image.mode)
+
+    def add_fragment(self, image_path, points, real_width, original_width, show_progress=False):
+        def build():
+            return self.create_masked_pixmap(image_path, points, real_width, original_width)
+
+        if show_progress:
+            container = {}
+            def work():
+                container['pixmap'] = build()
+            self._run_single_with_progress("Resampling fragment...", work)
+            pixmap = container.get('pixmap')
+        else:
+            pixmap = build()
+
+        if not pixmap:
+            return
 
         item = AtlasItem(pixmap)
         item.setPos(0, 0) 
@@ -225,9 +360,21 @@ class CanvasWidget(QWidget):
         self.scene.addItem(item)
         item.setScale(1.0)
 
-    def update_item(self, item, points, real_width, original_width):
-        pixmap = self.create_masked_pixmap(item.filepath, points, real_width, original_width)
-        if not pixmap: return
+    def update_item(self, item, points, real_width, original_width, show_progress=False):
+        def build():
+            return self.create_masked_pixmap(item.filepath, points, real_width, original_width)
+
+        if show_progress:
+            container = {}
+            def work():
+                container['pixmap'] = build()
+            self._run_single_with_progress("Resampling fragment...", work)
+            pixmap = container.get('pixmap')
+        else:
+            pixmap = build()
+
+        if not pixmap:
+            return
         
         item.setPixmap(pixmap)
         item.points = points

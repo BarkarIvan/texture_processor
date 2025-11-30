@@ -107,6 +107,9 @@ class EditablePolygonItem(QGraphicsPolygonItem):
             super().contextMenuEvent(event)
 
     def mousePressEvent(self, event):
+        if getattr(self.scene(), 'scale_mode_active', False):
+            event.ignore()
+            return
         if hasattr(self.scene(), 'push_state_callback'):
             self.scene().push_state_callback()
         self.dragging = True
@@ -213,6 +216,7 @@ class EditorWidget(QWidget):
             border: 1px solid #3f414a;
             padding: 4px 8px;
             border-radius: 4px;
+            font-size: 11px;
         }
         QToolButton:checked {
             background: #3a7ca5;
@@ -246,6 +250,7 @@ class EditorWidget(QWidget):
         self.scene.delete_point_callback = self.delete_point
         self.scene.insert_point_callback = self.insert_point_at
         self.scene.push_state_callback = self.push_state
+        self.scene.scale_mode_active = False
         
         self.view = ZoomPanView(self.scene, self)
         layout.addWidget(self.view)
@@ -280,6 +285,8 @@ class EditorWidget(QWidget):
         
         pixmap = QPixmap(filepath)
         self.current_image_item = self.scene.addPixmap(pixmap)
+        self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
+        self.current_image_item.setZValue(-1)
         self.view.fitInView(self.current_image_item, Qt.KeepAspectRatio)
 
         self.px_per_meter = px_per_meter
@@ -311,12 +318,15 @@ class EditorWidget(QWidget):
         self.scene.delete_point_callback = self.delete_point
         self.scene.insert_point_callback = self.insert_point_at
         self.scene.push_state_callback = self.push_state
+        self.scene.scale_mode_active = False
         if reset_history:
             self.undo_stack = []
             self.redo_stack = []
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             self.current_image_item = self.scene.addPixmap(pixmap)
+            self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
+            self.current_image_item.setZValue(-1)
 
     def on_view_clicked(self, pos):
         # If we are setting scale, handle separately
@@ -334,6 +344,7 @@ class EditorWidget(QWidget):
         if not self.current_image_path:
             return
         self.scale_mode_active = True
+        self.scene.scale_mode_active = True
         self.scale_points = []
         self.scale_btn.setChecked(True)
         if self.scale_line:
@@ -359,6 +370,7 @@ class EditorWidget(QWidget):
             self.scale_line.setZValue(0.6)
             self.update_width_from_scale()
             self.scale_mode_active = False
+            self.scene.scale_mode_active = False
             self.scale_points = []
             self.scale_btn.setChecked(False)
         else:
@@ -499,6 +511,7 @@ class EditorWidget(QWidget):
         self.scene.delete_point_callback = self.delete_point
         self.scene.insert_point_callback = self.insert_point_at
         self.scene.push_state_callback = self.push_state
+        self.scene.scale_mode_active = False
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             self.current_image_item = self.scene.addPixmap(pixmap)

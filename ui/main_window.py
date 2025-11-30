@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self.density_input.setPrefix("Density ")
         self.density_input.setSuffix(" px/m")
         self.density_input.setFixedWidth(160)
+        self.density_input.setStyleSheet("font-size: 11px;")
         self.density_input.valueChanged.connect(self.on_density_changed)
         self.toolbar.addWidget(self.density_input)
         
@@ -49,6 +50,7 @@ class MainWindow(QMainWindow):
         self.size_combo.setCurrentText("2048")
         self.size_combo.currentTextChanged.connect(self.on_size_changed)
         self.size_combo.setFixedWidth(90)
+        self.size_combo.setStyleSheet("font-size: 11px;")
         self.toolbar.addWidget(self.size_combo)
 
         self.grid_chk = QCheckBox("Grid")
@@ -65,6 +67,10 @@ class MainWindow(QMainWindow):
         duplicate_action = QAction("Duplicate", self)
         duplicate_action.triggered.connect(self.duplicate_selected_items)
         self.toolbar.addAction(duplicate_action)
+
+        delete_action = QAction("Delete", self)
+        delete_action.triggered.connect(self.delete_selected_items)
+        self.toolbar.addAction(delete_action)
 
         export_action = QAction("Export PNG", self)
         export_action.triggered.connect(self.export_atlas)
@@ -187,6 +193,8 @@ class MainWindow(QMainWindow):
     def on_grid_toggled(self, state):
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
         self.canvas.set_grid_visible(checked)
+        self.project_data['show_grid'] = checked
+        self.grid_chk.setChecked(checked)
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
@@ -276,12 +284,24 @@ class MainWindow(QMainWindow):
                     pos = new_item.pos()
                     new_item.setPos(round(pos.x()), round(pos.y()))
 
+    def delete_selected_items(self):
+        selected = [it for it in self.canvas.scene.selectedItems() if isinstance(it, AtlasItem)]
+        if not selected:
+            return
+        for it in selected:
+            tex_entry = self.project_data['textures'].get(it.filepath)
+            if tex_entry:
+                masks = tex_entry.get('masks', [])
+                tex_entry['masks'] = [m for m in masks if m.get('id') != it.mask_id]
+            self.canvas.scene.removeItem(it)
+
     def save_project(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
         if filepath:
             import json
             self.project_data['base_path'] = self.browser.current_folder
             self.project_data['atlas_density'] = self.density_input.value()
+            self.project_data['show_grid'] = self.grid_chk.isChecked()
             # Capture item positions
             items_data = []
             for it in self.canvas.scene.items():
@@ -330,6 +350,7 @@ class MainWindow(QMainWindow):
             atlas_size = self.project_data.get('atlas_size', 2048)
             self.size_combo.setCurrentText(str(atlas_size))
             self.canvas.set_canvas_size(atlas_size)
+            self.grid_chk.setChecked(self.project_data.get('show_grid', False))
 
             # Resample settings
             mode = self.project_data.get('resample_mode', 'lanczos')

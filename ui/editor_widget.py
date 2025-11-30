@@ -98,10 +98,17 @@ class EditorWidget(QWidget):
         self.tool_group.addButton(self.rect_tool)
 
         self.scale_btn = QToolButton()
-        self.scale_btn.setText("Set 1m")
+        self.scale_btn.setText("Set Scale")
         self.scale_btn.setCheckable(True)
         self.scale_btn.clicked.connect(self.start_scale_mode)
         tools_layout.addWidget(self.scale_btn)
+
+        self.scale_length_input = QDoubleSpinBox()
+        self.scale_length_input.setRange(0.01, 10000.0)
+        self.scale_length_input.setValue(1.0)
+        self.scale_length_input.setPrefix("Len: ")
+        self.scale_length_input.setSuffix(" m")
+        tools_layout.addWidget(self.scale_length_input)
         
         self.width_input = QDoubleSpinBox()
         self.width_input.setRange(0.1, 1000.0)
@@ -207,12 +214,13 @@ class EditorWidget(QWidget):
             p1, p2 = self.scale_points
             length_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
             if length_px > 0:
-                self.px_per_meter = length_px
+                ref_m = max(0.01, self.scale_length_input.value())
+                self.px_per_meter = length_px / ref_m
                 # Visual line
                 if self.scale_line:
                     self.scene.removeItem(self.scale_line)
-            pen = QPen(QColor(255, 0, 255), 0, Qt.DashLine)  # Cosmetic
-            self.scale_line = self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
+                pen = QPen(QColor(255, 0, 255), 0, Qt.DashLine)  # Cosmetic
+                self.scale_line = self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), pen)
             self.scale_line.setZValue(0.6)
             self.update_width_from_scale()
             self.scale_mode_active = False

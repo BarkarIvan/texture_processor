@@ -76,6 +76,19 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_atlas)
         self.toolbar.addAction(export_action)
         self.toolbar.addSeparator()
+        # Mip Flood toggle
+        self.mip_flood_chk = QCheckBox("Mip Flood")
+        self.mip_flood_chk.setToolTip("Replace alpha outside mask with downscaled mips on export")
+        self.mip_flood_chk.stateChanged.connect(self.on_mip_flood_toggled)
+        self.toolbar.addWidget(self.mip_flood_chk)
+        self.mip_levels_spin = QSpinBox()
+        self.mip_levels_spin.setRange(0, 16)  # 0 = auto
+        self.mip_levels_spin.setValue(0)
+        self.mip_levels_spin.setPrefix("Levels ")
+        self.mip_levels_spin.setStyleSheet("font-size: 11px;")
+        self.mip_levels_spin.valueChanged.connect(self.on_mip_levels_changed)
+        self.toolbar.addWidget(self.mip_levels_spin)
+        self.toolbar.addSeparator()
         # Fit/Center actions will be wired after canvas is created
         self.fit_action = QAction("Fit", self)
         self.center_action = QAction("Center", self)
@@ -128,11 +141,14 @@ class MainWindow(QMainWindow):
             'kaiser_beta': 3.0,
             'kaiser_radius': 2,
             'atlas_density': 512.0,
-            'atlas_size': 2048
+            'atlas_size': 2048,
+            'mip_flood': False,
+            'mip_flood_levels': 0
         }
         self.apply_dark_theme()
         self.statusBar().showMessage("Ready")
         self.canvas.hover_changed.connect(self.update_status)
+        self.mip_flood_chk.setChecked(False)
 
     def apply_dark_theme(self):
         # Simple dark palette
@@ -205,11 +221,21 @@ class MainWindow(QMainWindow):
         self.canvas.set_canvas_size(size)
         self.project_data['atlas_size'] = size
 
+    def on_mip_levels_changed(self, value):
+        self.canvas.mip_flood_levels = value
+        self.project_data['mip_flood_levels'] = value
+
     def on_grid_toggled(self, state):
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
         self.canvas.set_grid_visible(checked)
         self.project_data['show_grid'] = checked
         self.grid_chk.setChecked(checked)
+
+    def on_mip_flood_toggled(self, state):
+        enabled = Qt.CheckState(state) == Qt.CheckState.Checked
+        self.canvas.enable_mip_flood = enabled
+        self.canvas.mip_flood_levels = self.mip_levels_spin.value()
+        self.project_data['mip_flood'] = enabled
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
@@ -317,6 +343,8 @@ class MainWindow(QMainWindow):
             self.project_data['base_path'] = self.browser.current_folder
             self.project_data['atlas_density'] = self.density_input.value()
             self.project_data['show_grid'] = self.grid_chk.isChecked()
+            self.project_data['mip_flood'] = self.mip_flood_chk.isChecked()
+            self.project_data['mip_flood_levels'] = self.mip_levels_spin.value()
             # Capture item positions
             items_data = []
             for it in self.canvas.scene.items():
@@ -366,6 +394,9 @@ class MainWindow(QMainWindow):
             self.size_combo.setCurrentText(str(atlas_size))
             self.canvas.set_canvas_size(atlas_size)
             self.grid_chk.setChecked(self.project_data.get('show_grid', False))
+            self.mip_flood_chk.setChecked(self.project_data.get('mip_flood', False))
+            self.mip_levels_spin.setValue(int(self.project_data.get('mip_flood_levels', 0)))
+            self.canvas.mip_flood_levels = self.mip_levels_spin.value()
 
             # Resample settings
             mode = self.project_data.get('resample_mode', 'lanczos')
@@ -375,7 +406,6 @@ class MainWindow(QMainWindow):
             # Ensure density applied (valueChanged will fire, but be explicit)
             self.canvas.set_atlas_density(self.density_input.value(), show_progress=False)
             self.canvas.set_grid_visible(self.project_data.get('show_grid', False))
-
             # Restore canvas
             self.canvas.scene.clear()
             tex_items = list(self.project_data.get('textures', {}).items())

@@ -1,9 +1,10 @@
 from collections import OrderedDict
+import math
 import numpy as np
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PIL import Image
+from PIL import Image, ImageChops
 from PIL.ImageQt import ImageQt
 from .view_utils import ZoomPanView
 
@@ -133,6 +134,9 @@ class CanvasWidget(QWidget):
         self.kaiser_beta = 3.0
         self.kaiser_radius = 2
         self.scene.snap_items_to_pixel = False
+        self.enable_mip_flood = False
+        self.mip_flood_threshold = 1
+        self.mip_flood_levels = 6
         
         self.scene.selectionChanged.connect(self.on_selection_changed)
         self.view.viewport().setMouseTracking(True)
@@ -312,7 +316,7 @@ class CanvasWidget(QWidget):
         painter.setClipPath(path)
         painter.drawPixmap(0, 0, src_pixmap)
         painter.end()
-        
+
         return QPixmap.fromImage(target_image)
 
     def _kaiser_resize(self, image: Image.Image, target_size, radius: int, beta: float) -> Image.Image:
@@ -476,6 +480,10 @@ class CanvasWidget(QWidget):
         painter = QPainter(image)
         self.scene.render(painter)
         painter.end()
+
+        # Optional mip flood (color only, alpha untouched)
+        if self.enable_mip_flood:
+            image = self.apply_mip_flood(image, self.mip_flood_threshold, self.mip_flood_levels)
         
         # Restore
         self.scene.setBackgroundBrush(old_bg)
@@ -485,3 +493,65 @@ class CanvasWidget(QWidget):
             item.setSelected(True)
             
         image.save(filename)
+
+    def apply_mip_flood(self, qimage, alpha_threshold=1, levels=4):
+        """Apply mip flooding based on alpha mask (color channels only, alpha untouched)."""
+        rgba_img = qimage.convertToFormat(QImage.Format_RGBA8888)
+        buffer = rgba_img.bits().tobytes()
+        w, h = rgba_img.width(), rgba_img.height()
+        if w == 0 or h == 0:
+            return qimage
+
+        # Convert to numpy
+        arr = np.frombuffer(buffer, dtype=np.uint8).reshape((h, w, 4))
+        alpha = arr[..., 3]
+        mask = (alpha > alpha_threshold).astype(np.uint8)
+        color = arr[..., :3].astype(np.float32) / 255.0
+
+        def pad_even(img_arr, mask_arr):
+            h, w = img_arr.shape[:2]
+            pad_h = h % 2
+            pad_w = w % 2
+            if pad_h or pad_w:
+                img_arr = np.pad(img_arr, ((0, pad_h), (0, pad_w), (0, 0)), mode='edge')
+                mask_arr = np.pad(mask_arr, ((0, pad_h), (0, pad_w)), mode='edge')
+            return img_arr, mask_arr
+
+        # Auto levels to reach 1x1
+        if levels is None or levels <= 0:
+            levels = int(math.ceil(math.log2(max(w, h)))) if max(w, h) > 0 else 1
+
+        colors = [color]
+        masks = [mask]
+        for _ in range(levels):
+            img_arr, mask_arr = pad_even(colors[-1], masks[-1])
+            h2, w2 = img_arr.shape[0] // 2, img_arr.shape[1] // 2
+            # Downscale mask by OR
+            mask_blocks = mask_arr.reshape(h2, 2, w2, 2)
+            mask_ds = mask_blocks.max(axis=(1, 3))
+            # Downscale color weighted by coverage
+            color_blocks = img_arr.reshape(h2, 2, w2, 2, 3)
+            coverage = mask_blocks.sum(axis=(1, 3)).reshape(h2, w2, 1)
+            summed = (color_blocks * mask_blocks[..., None]).sum(axis=(1, 3))
+            color_ds = np.where(coverage > 0, summed / coverage, 0.0)
+            colors.append(color_ds)
+            masks.append(mask_ds)
+            if h2 == 1 and w2 == 1:
+                break
+
+        # Flood from smallest to largest
+        for i in range(len(colors) - 2, -1, -1):
+            small_c = colors[i + 1]
+            big_c = colors[i]
+            big_mask = masks[i]
+            # Upscale small to big via nearest
+            up = small_c.repeat(2, axis=0).repeat(2, axis=1)
+            up = up[: big_c.shape[0], : big_c.shape[1], :]
+            # Fill only where mask==0
+            fill_mask = (big_mask == 0)[..., None]
+            colors[i] = np.where(fill_mask, up, big_c)
+
+        final_color = (colors[0] * 255.0).clip(0, 255).astype(np.uint8)
+        out_arr = np.concatenate([final_color, alpha[..., None]], axis=2)
+        out = QImage(out_arr.data, out_arr.shape[1], out_arr.shape[0], QImage.Format_RGBA8888).copy()
+        return out

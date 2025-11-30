@@ -22,6 +22,14 @@ class AtlasItem(QGraphicsPixmapItem):
         self.original_width = None
         self.mask_id = None
 
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            scene = self.scene()
+            if scene and getattr(scene, "snap_items_to_pixel", False):
+                pos = value
+                return QPointF(round(pos.x()), round(pos.y()))
+        return super().itemChange(change, value)
+
     def paint(self, painter, option, widget):
         super().paint(painter, option, widget)
 
@@ -120,9 +128,10 @@ class CanvasWidget(QWidget):
         self.scene.grid_step = self.atlas_density
         self._lanczos_cache = OrderedDict() # (path, rect, target_size) -> QImage
         self._cache_limit = 32
-        self.resample_mode = "lanczos" # "lanczos" or "kaiser"
+        self.resample_mode = "lanczos" # "lanczos", "kaiser", "nearest"
         self.kaiser_beta = 3.0
         self.kaiser_radius = 2
+        self.scene.snap_items_to_pixel = False
         
         self.scene.selectionChanged.connect(self.on_selection_changed)
 
@@ -138,9 +147,13 @@ class CanvasWidget(QWidget):
                     self.regenerate_item_pixmap(item)
 
     def set_resample_settings(self, mode, beta=None, radius=None):
-        if mode not in ("lanczos", "kaiser"):
+        if mode not in ("lanczos", "kaiser", "nearest"):
             return
         self.resample_mode = mode
+        # Toggle view smoothing for pixel art
+        if self.view:
+            self.view.setRenderHint(QPainter.SmoothPixmapTransform, mode != "nearest")
+        self.scene.snap_items_to_pixel = (mode == "nearest")
         if beta is not None:
             self.kaiser_beta = beta
         if radius is not None:
@@ -148,6 +161,8 @@ class CanvasWidget(QWidget):
         # Clear cache and rebuild items to apply new filter
         self._lanczos_cache.clear()
         self.rebuild_items_with_progress("Resampling items...")
+        if self.scene.snap_items_to_pixel:
+            self.snap_items_to_pixel()
 
     def set_canvas_size(self, size):
         self.scene.setSceneRect(0, 0, size, size)
@@ -157,12 +172,23 @@ class CanvasWidget(QWidget):
         self.scene.grid_enabled = visible
         self.scene.update()
 
+    def snap_items_to_pixel(self):
+        for item in self.scene.items():
+            if isinstance(item, AtlasItem):
+                pos = item.pos()
+                item.setPos(round(pos.x()), round(pos.y()))
+
     def regenerate_item_pixmap(self, item):
         if item.filepath and item.points and item.real_width and item.original_width:
             pixmap = self.create_masked_pixmap(item.filepath, item.points, item.real_width, item.original_width)
             if pixmap:
                 item.setPixmap(pixmap)
                 item.setScale(1.0)
+                # Respect pixel mode transform
+                if self.resample_mode == "nearest":
+                    item.setTransformationMode(Qt.FastTransformation)
+                else:
+                    item.setTransformationMode(Qt.SmoothTransformation)
 
     def _run_single_with_progress(self, title, func):
         dlg = QProgressDialog(title, None, 0, 0, self)
@@ -218,6 +244,8 @@ class CanvasWidget(QWidget):
             cropped = img.crop(box)
             if self.resample_mode == "kaiser":
                 resized = self._kaiser_resize(cropped, target_size, self.kaiser_radius, self.kaiser_beta)
+            elif self.resample_mode == "nearest":
+                resized = cropped.resize(target_size, Image.NEAREST)
             else:
                 resized = cropped.resize(target_size, Image.LANCZOS)
             qimg = ImageQt(resized).copy() # Detach from PIL buffer
@@ -349,6 +377,9 @@ class CanvasWidget(QWidget):
 
         item = AtlasItem(pixmap)
         item.setPos(0, 0) 
+        if self.scene.snap_items_to_pixel:
+            pos = item.pos()
+            item.setPos(round(pos.x()), round(pos.y()))
         
         # Store metadata
         item.filepath = image_path
@@ -363,6 +394,10 @@ class CanvasWidget(QWidget):
         
         self.scene.addItem(item)
         item.setScale(1.0)
+        if self.resample_mode == "nearest":
+            item.setTransformationMode(Qt.FastTransformation)
+        else:
+            item.setTransformationMode(Qt.SmoothTransformation)
         return item
 
     def update_item(self, item, points, real_width, original_width, mask_id=None, show_progress=False):
@@ -387,6 +422,13 @@ class CanvasWidget(QWidget):
         item.original_width = original_width
         if mask_id is not None:
             item.mask_id = mask_id
+        if self.scene.snap_items_to_pixel:
+            pos = item.pos()
+            item.setPos(round(pos.x()), round(pos.y()))
+        if self.resample_mode == "nearest":
+            item.setTransformationMode(Qt.FastTransformation)
+        else:
+            item.setTransformationMode(Qt.SmoothTransformation)
         
         item.setData(Qt.UserRole + 1, real_width)
         item.setData(Qt.UserRole + 2, original_width)

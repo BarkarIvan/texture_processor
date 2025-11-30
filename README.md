@@ -2,7 +2,9 @@
 
 Приложение на PySide6 для нарезки масок из исходных текстур и сборки их в атлас с точным масштабом по реальным размерам.
 
-Desktop tool (PySide6) for cutting masks out of source textures and assembling them into an atlas with precise real‑world scaling.
+Desktop tool (PySide6) for cutting masks out of source textures and assembling them into an atlas with precise real‑world scaling. Dark theme applied out of the box.
+
+![Texture Atlas Editor](Images/screenshot.png)
 
 ## Возможности
 - Импорт: при выборе папки в левом списке появляются все изображения (png/jpg/jpeg/tga/bmp).

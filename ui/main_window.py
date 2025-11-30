@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy
-from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication
+from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtCore import Qt, QPointF
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication, QVBoxLayout as QVBoxLayoutWidget
 from .browser_widget import BrowserWidget
 from .editor_widget import EditorWidget
 from .canvas_widget import CanvasWidget, AtlasItem
@@ -14,50 +14,61 @@ class MainWindow(QMainWindow):
 
         # Toolbar
         self.toolbar = QToolBar("Main Toolbar")
+        self.toolbar.setMovable(False)
         self.addToolBar(self.toolbar)
 
-        open_folder_action = QAction("Open Folder", self)
+        # File/Project group
+        file_group = QActionGroup(self)
+        open_folder_action = QAction("Open", self)
         open_folder_action.triggered.connect(self.open_folder)
         self.toolbar.addAction(open_folder_action)
 
+        save_action = QAction("Save", self)
+        save_action.triggered.connect(self.save_project)
+        self.toolbar.addAction(save_action)
+
+        load_action = QAction("Load", self)
+        load_action.triggered.connect(self.load_project)
+        self.toolbar.addAction(load_action)
+
         self.toolbar.addSeparator()
-        
+
+        # Atlas group
         self.density_input = QDoubleSpinBox()
         self.density_input.setRange(1.0, 4096.0)
         self.density_input.setValue(512.0)
         self.density_input.setKeyboardTracking(False) # Apply on Enter/finish editing
-        self.density_input.setPrefix("Atlas Density: ")
+        self.density_input.setPrefix("Density ")
         self.density_input.setSuffix(" px/m")
+        self.density_input.setFixedWidth(160)
         self.density_input.valueChanged.connect(self.on_density_changed)
         self.toolbar.addWidget(self.density_input)
-        
-        self.grid_chk = QCheckBox("Show Grid")
-        self.grid_chk.stateChanged.connect(self.on_grid_toggled)
-        self.toolbar.addWidget(self.grid_chk)
         
         self.size_combo = QComboBox()
         self.size_combo.addItems(["1024", "2048", "3072", "4096"])
         self.size_combo.setCurrentText("2048")
         self.size_combo.currentTextChanged.connect(self.on_size_changed)
+        self.size_combo.setFixedWidth(90)
         self.toolbar.addWidget(self.size_combo)
 
+        self.grid_chk = QCheckBox("Grid")
+        self.grid_chk.stateChanged.connect(self.on_grid_toggled)
+        self.toolbar.addWidget(self.grid_chk)
+
         self.toolbar.addSeparator()
-        
-        save_action = QAction("Save Project", self)
-        save_action.triggered.connect(self.save_project)
-        self.toolbar.addAction(save_action)
-        
-        load_action = QAction("Load Project", self)
-        load_action.triggered.connect(self.load_project)
-        self.toolbar.addAction(load_action)
-        
+
+        # Resample/Export
+        resample_action = QAction("Resample", self)
+        resample_action.triggered.connect(self.open_resample_settings)
+        self.toolbar.addAction(resample_action)
+
+        duplicate_action = QAction("Duplicate", self)
+        duplicate_action.triggered.connect(self.duplicate_selected_items)
+        self.toolbar.addAction(duplicate_action)
+
         export_action = QAction("Export PNG", self)
         export_action.triggered.connect(self.export_atlas)
         self.toolbar.addAction(export_action)
-
-        resample_action = QAction("Resample Settings", self)
-        resample_action.triggered.connect(self.open_resample_settings)
-        self.toolbar.addAction(resample_action)
 
         # Main layout
         central_widget = QWidget()
@@ -82,7 +93,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.canvas)
 
         # Set initial sizes (approx 20%, 40%, 40%)
-        splitter.setSizes([250, 500, 500])
+        splitter.setSizes([220, 520, 640])
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 3)
@@ -104,6 +115,60 @@ class MainWindow(QMainWindow):
             'atlas_density': 512.0,
             'atlas_size': 2048
         }
+        self.apply_dark_theme()
+
+    def apply_dark_theme(self):
+        # Simple dark palette
+        self.setStyleSheet("""
+        QMainWindow, QWidget {
+            background: #1e1f24;
+            color: #e8e8ea;
+            font-family: 'Segoe UI', 'Inter', sans-serif;
+            font-size: 12px;
+        }
+        QToolBar {
+            background: #2a2c32;
+            spacing: 6px;
+            padding: 4px;
+            border: 0px;
+        }
+        QToolBar QToolButton, QToolBar QLabel {
+            color: #f0f0f2;
+        }
+        QToolBar QToolButton:hover {
+            background: #3a3c44;
+        }
+        QToolBar QToolButton:pressed {
+            background: #444650;
+        }
+        QComboBox, QDoubleSpinBox, QSpinBox, QLineEdit {
+            background: #2f3138;
+            border: 1px solid #3f414a;
+            padding: 2px 6px;
+            color: #f0f0f2;
+            border-radius: 4px;
+        }
+        QCheckBox { color: #f0f0f2; }
+        QListWidget, QGraphicsView {
+            background: #22242a;
+            border: 1px solid #31343c;
+        }
+        QPushButton {
+            background: #3a7ca5;
+            border: 1px solid #3a7ca5;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+        }
+        QPushButton:hover { background: #4492c1; }
+        QPushButton:pressed { background: #377192; }
+        QMenu {
+            background: #2a2c32;
+            color: #f0f0f2;
+            border: 1px solid #3f414a;
+        }
+        QMenu::item:selected { background: #3a3c44; }
+        """)
 
     def open_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
@@ -187,6 +252,29 @@ class MainWindow(QMainWindow):
         else:
             # Add new item
             self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=mask_id, show_progress=True)
+
+    def duplicate_selected_items(self):
+        selected = [it for it in self.canvas.scene.selectedItems() if isinstance(it, AtlasItem)]
+        if not selected:
+            return
+        offset = QPointF(20, 20)
+        for it in selected:
+            tex_entry = self.project_data['textures'].setdefault(it.filepath, {'px_per_meter': None, 'masks': []})
+            if tex_entry.get('px_per_meter') is None and self.editor.px_per_meter:
+                tex_entry['px_per_meter'] = self.editor.px_per_meter
+            next_id = max([m.get('id', 0) for m in tex_entry['masks']] + [0]) + 1
+            tex_entry['masks'].append({
+                'id': next_id,
+                'points': it.points,
+                'real_width': it.real_width,
+                'original_width': it.original_width
+            })
+            new_item = self.canvas.add_fragment(it.filepath, it.points, it.real_width, it.original_width, mask_id=next_id, show_progress=True)
+            if new_item:
+                new_item.setPos(it.pos() + offset)
+                if self.canvas.scene.snap_items_to_pixel:
+                    pos = new_item.pos()
+                    new_item.setPos(round(pos.x()), round(pos.y()))
 
     def save_project(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
@@ -297,6 +385,8 @@ class MainWindow(QMainWindow):
                 item = item_map.get(key)
                 if item:
                     item.setPos(entry.get('x', 0), entry.get('y', 0))
+            if self.canvas.scene.snap_items_to_pixel:
+                self.canvas.snap_items_to_pixel()
 
     def export_atlas(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export Atlas", "", "PNG Files (*.png)")
@@ -309,14 +399,19 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         lanczos_radio = QRadioButton("Lanczos (default)")
-        kaiser_radio = QRadioButton("Kaiser")
-        if self.project_data.get('resample_mode', 'lanczos') == 'kaiser':
+        kaiser_radio = QRadioButton("Kaiser (windowed sinc)")
+        nearest_radio = QRadioButton("Pixel (Nearest)")
+        mode_current = self.project_data.get('resample_mode', 'lanczos')
+        if mode_current == 'kaiser':
             kaiser_radio.setChecked(True)
+        elif mode_current == 'nearest':
+            nearest_radio.setChecked(True)
         else:
             lanczos_radio.setChecked(True)
 
         layout.addWidget(lanczos_radio)
         layout.addWidget(kaiser_radio)
+        layout.addWidget(nearest_radio)
 
         form = QFormLayout()
         beta_spin = QDoubleSpinBoxWidget()
@@ -331,11 +426,23 @@ class MainWindow(QMainWindow):
         form.addRow("Kaiser radius", radius_spin)
         layout.addLayout(form)
 
+        def update_enabled():
+            enabled = kaiser_radio.isChecked()
+            beta_spin.setEnabled(enabled)
+            radius_spin.setEnabled(enabled)
+        kaiser_radio.toggled.connect(update_enabled)
+        update_enabled()
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         layout.addWidget(buttons)
 
         def accept():
-            mode = 'kaiser' if kaiser_radio.isChecked() else 'lanczos'
+            if kaiser_radio.isChecked():
+                mode = 'kaiser'
+            elif nearest_radio.isChecked():
+                mode = 'nearest'
+            else:
+                mode = 'lanczos'
             beta = beta_spin.value()
             radius = radius_spin.value()
             self.project_data['resample_mode'] = mode

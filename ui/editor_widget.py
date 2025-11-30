@@ -90,6 +90,11 @@ class HandleItem(QGraphicsEllipseItem):
         super().mousePressEvent(event)
 
 class EditablePolygonItem(QGraphicsPolygonItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dragging = False
+        self.drag_last = None
+
     def contextMenuEvent(self, event):
         add_action = None
         menu = QMenu()
@@ -100,6 +105,35 @@ class EditablePolygonItem(QGraphicsPolygonItem):
                 self.scene().insert_point_callback(event.scenePos())
         else:
             super().contextMenuEvent(event)
+
+    def mousePressEvent(self, event):
+        if hasattr(self.scene(), 'push_state_callback'):
+            self.scene().push_state_callback()
+        self.dragging = True
+        self.drag_last = event.scenePos()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.dragging and self.drag_last is not None:
+            delta = event.scenePos() - self.drag_last
+            points_list = getattr(self.scene(), 'points_ref', [])
+            for h in points_list:
+                h.setPos(h.pos() + delta)
+            self.drag_last = event.scenePos()
+            # Update polygon in place
+            if hasattr(self.scene(), 'points_ref'):
+                poly_points = [h.pos() for h in points_list]
+                self.setPolygon(QPolygonF(poly_points))
+            if hasattr(self.scene(), 'update_polygon_callback'):
+                self.scene().update_polygon_callback()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.dragging = False
+        self.drag_last = None
+        event.accept()
 
 class EditorWidget(QWidget):
     mask_applied = Signal(str, list, float, int, object, object) # filepath, points, real_width, original_width, item_ref, mask_id
@@ -170,6 +204,42 @@ class EditorWidget(QWidget):
         
         tools_layout.addStretch()
         layout.addWidget(tools_widget)
+
+        # Tool button styles for selected state
+        btn_style = """
+        QToolButton {
+            background: #2b2d33;
+            color: #f0f0f2;
+            border: 1px solid #3f414a;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        QToolButton:checked {
+            background: #3a7ca5;
+            border: 1px solid #3a7ca5;
+            color: white;
+        }
+        QToolButton:hover {
+            background: #353740;
+        }
+        """
+        self.poly_tool.setStyleSheet(btn_style)
+        self.rect_tool.setStyleSheet(btn_style)
+        self.scale_btn.setStyleSheet(btn_style)
+
+        btn_normal_style = """
+        QPushButton {
+            background: #2f3138;
+            border: 1px solid #3f414a;
+            color: #f0f0f2;
+            padding: 4px 10px;
+            border-radius: 4px;
+        }
+        QPushButton:hover { background: #353740; }
+        QPushButton:pressed { background: #3a7ca5; border-color: #3a7ca5; }
+        """
+        for b in (self.apply_btn, self.clear_btn, self.undo_btn, self.redo_btn):
+            b.setStyleSheet(btn_normal_style)
 
         self.scene = QGraphicsScene()
         self.scene.update_polygon_callback = self.update_polygon 
@@ -538,14 +608,14 @@ class EditorWidget(QWidget):
         poly_points = [h.pos() for h in self.points]
         
         if self.polygon_item:
-            self.scene.removeItem(self.polygon_item)
-        
-        poly_item = EditablePolygonItem(QPolygonF(poly_points))
-        poly_item.setPen(QPen(Qt.green, 0))
-        poly_item.setBrush(QBrush(QColor(0, 255, 0, 50)))
-        poly_item.setZValue(0.5)
-        self.scene.addItem(poly_item)
-        self.polygon_item = poly_item
+            self.polygon_item.setPolygon(QPolygonF(poly_points))
+        else:
+            poly_item = EditablePolygonItem(QPolygonF(poly_points))
+            poly_item.setPen(QPen(Qt.green, 0))
+            poly_item.setBrush(QBrush(QColor(0, 255, 0, 50)))
+            poly_item.setZValue(0.5)
+            self.scene.addItem(poly_item)
+            self.polygon_item = poly_item
         
         for h in self.points:
             h.setZValue(1)

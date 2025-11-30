@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import numpy as np
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image
@@ -110,6 +110,7 @@ class CanvasScene(QGraphicsScene):
 
 class CanvasWidget(QWidget):
     item_edit_requested = Signal(object) # AtlasItem
+    hover_changed = Signal(float, float, float) # x, y, zoom
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,6 +135,8 @@ class CanvasWidget(QWidget):
         self.scene.snap_items_to_pixel = False
         
         self.scene.selectionChanged.connect(self.on_selection_changed)
+        self.view.viewport().setMouseTracking(True)
+        self.view.setMouseTracking(True)
 
     def set_atlas_density(self, density, show_progress=False):
         self.atlas_density = density
@@ -172,11 +175,26 @@ class CanvasWidget(QWidget):
         self.scene.grid_enabled = visible
         self.scene.update()
 
+    def fit_to_atlas(self):
+        self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def center_on_atlas(self):
+        self.view.centerOn(self.scene.sceneRect().center())
+
     def snap_items_to_pixel(self):
         for item in self.scene.items():
             if isinstance(item, AtlasItem):
                 pos = item.pos()
                 item.setPos(round(pos.x()), round(pos.y()))
+
+    def mouseMoveEvent(self, event):
+        if self.view and self.scene:
+            scene_pos = self.view.mapToScene(event.pos())
+            # Approximate zoom factor (scale from transform)
+            m = self.view.transform()
+            zoom = m.m11()
+            self.hover_changed.emit(scene_pos.x(), scene_pos.y(), zoom)
+        super().mouseMoveEvent(event)
 
     def regenerate_item_pixmap(self, item):
         if item.filepath and item.points and item.real_width and item.original_width:
@@ -194,6 +212,7 @@ class CanvasWidget(QWidget):
         dlg = QProgressDialog(title, None, 0, 0, self)
         dlg.setWindowModality(Qt.ApplicationModal)
         dlg.setMinimumDuration(0)
+        dlg.setStyleSheet("QProgressDialog { background: #2a2c32; color: #f0f0f2; } QProgressBar { background: #22242a; border: 1px solid #3f414a; }")
         dlg.show()
         QApplication.processEvents()
         func()
@@ -207,6 +226,7 @@ class CanvasWidget(QWidget):
         dlg = QProgressDialog(title, None, 0, total, self)
         dlg.setWindowModality(Qt.ApplicationModal)
         dlg.setMinimumDuration(0)
+        dlg.setStyleSheet("QProgressDialog { background: #2a2c32; color: #f0f0f2; } QProgressBar { background: #22242a; border: 1px solid #3f414a; }")
         dlg.show()
         for idx, item in enumerate(items, start=1):
             QApplication.processEvents()

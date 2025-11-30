@@ -75,6 +75,10 @@ class MainWindow(QMainWindow):
         export_action = QAction("Export PNG", self)
         export_action.triggered.connect(self.export_atlas)
         self.toolbar.addAction(export_action)
+        self.toolbar.addSeparator()
+        # Fit/Center actions will be wired after canvas is created
+        self.fit_action = QAction("Fit", self)
+        self.center_action = QAction("Center", self)
 
         # Main layout
         central_widget = QWidget()
@@ -89,6 +93,11 @@ class MainWindow(QMainWindow):
         self.browser = BrowserWidget()
         self.editor = EditorWidget()
         self.canvas = CanvasWidget()
+        # Wire Fit/Center actions now
+        self.fit_action.triggered.connect(self.canvas.fit_to_atlas)
+        self.center_action.triggered.connect(self.canvas.center_on_atlas)
+        self.toolbar.addAction(self.fit_action)
+        self.toolbar.addAction(self.center_action)
         # Size policies
         self.browser.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -122,6 +131,8 @@ class MainWindow(QMainWindow):
             'atlas_size': 2048
         }
         self.apply_dark_theme()
+        self.statusBar().showMessage("Ready")
+        self.canvas.hover_changed.connect(self.update_status)
 
     def apply_dark_theme(self):
         # Simple dark palette
@@ -130,7 +141,7 @@ class MainWindow(QMainWindow):
             background: #1e1f24;
             color: #e8e8ea;
             font-family: 'Segoe UI', 'Inter', sans-serif;
-            font-size: 12px;
+            font-size: 11px;
         }
         QToolBar {
             background: #2a2c32;
@@ -174,6 +185,10 @@ class MainWindow(QMainWindow):
             border: 1px solid #3f414a;
         }
         QMenu::item:selected { background: #3a3c44; }
+        QStatusBar {
+            background: #2a2c32;
+            color: #f0f0f2;
+        }
         """)
 
     def open_folder(self):
@@ -359,6 +374,7 @@ class MainWindow(QMainWindow):
             self.canvas.set_resample_settings(mode, beta, radius)
             # Ensure density applied (valueChanged will fire, but be explicit)
             self.canvas.set_atlas_density(self.density_input.value(), show_progress=False)
+            self.canvas.set_grid_visible(self.project_data.get('show_grid', False))
 
             # Restore canvas
             self.canvas.scene.clear()
@@ -476,3 +492,6 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
 
         dialog.exec()
+
+    def update_status(self, x, y, zoom):
+        self.statusBar().showMessage(f"Pos: ({x:.1f}, {y:.1f}) | Zoom: {zoom:.2f} | Density: {self.density_input.value():.0f} px/m")

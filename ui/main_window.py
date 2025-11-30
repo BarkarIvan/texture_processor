@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox
+from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication
@@ -72,6 +72,10 @@ class MainWindow(QMainWindow):
         self.browser = BrowserWidget()
         self.editor = EditorWidget()
         self.canvas = CanvasWidget()
+        # Size policies
+        self.browser.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         splitter.addWidget(self.browser)
         splitter.addWidget(self.editor)
@@ -79,6 +83,9 @@ class MainWindow(QMainWindow):
 
         # Set initial sizes (approx 20%, 40%, 40%)
         splitter.setSizes([250, 500, 500])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(2, 3)
 
         main_layout.addWidget(splitter)
 

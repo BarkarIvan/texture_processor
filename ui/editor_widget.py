@@ -1,5 +1,5 @@
 import math
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup, QSizePolicy
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QGuiApplication
 from PySide6.QtCore import Qt, QPointF, Signal, QRectF
 from .view_utils import ZoomPanView
@@ -107,6 +107,8 @@ class EditorWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self.setMinimumWidth(300)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Toolbar
         tools_widget = QWidget()

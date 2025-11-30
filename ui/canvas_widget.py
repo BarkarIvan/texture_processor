@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import numpy as np
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image
@@ -106,6 +106,8 @@ class CanvasWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self.setMinimumWidth(400)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.scene = CanvasScene(0, 0, 2048, 2048) 
         self.view = ZoomPanView(self.scene, self)
         self.view.setDragMode(QGraphicsView.RubberBandDrag)

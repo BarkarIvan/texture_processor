@@ -1,5 +1,5 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QLabel, QSizePolicy
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtCore import Signal, QSize, Qt
 
@@ -9,6 +9,8 @@ class BrowserWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self.setMinimumWidth(180)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
         self.header_label = QLabel("No folder selected")
         layout.addWidget(self.header_label)

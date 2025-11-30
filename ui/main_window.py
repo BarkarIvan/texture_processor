@@ -82,12 +82,17 @@ class MainWindow(QMainWindow):
         self.mip_flood_chk.stateChanged.connect(self.on_mip_flood_toggled)
         self.toolbar.addWidget(self.mip_flood_chk)
         self.mip_levels_spin = QSpinBox()
-        self.mip_levels_spin.setRange(0, 16)  # 0 = auto
-        self.mip_levels_spin.setValue(0)
+        self.mip_levels_spin = QSpinBox()
+        self.mip_levels_spin.setRange(1, 16)
+        self.mip_levels_spin.setValue(6)
         self.mip_levels_spin.setPrefix("Levels ")
         self.mip_levels_spin.setStyleSheet("font-size: 11px;")
         self.mip_levels_spin.valueChanged.connect(self.on_mip_levels_changed)
         self.toolbar.addWidget(self.mip_levels_spin)
+        self.mip_levels_auto = QCheckBox("Auto")
+        self.mip_levels_auto.setToolTip("Auto levels until 1x1")
+        self.mip_levels_auto.stateChanged.connect(self.on_mip_auto_toggled)
+        self.toolbar.addWidget(self.mip_levels_auto)
         self.toolbar.addSeparator()
         # Fit/Center actions will be wired after canvas is created
         self.fit_action = QAction("Fit", self)
@@ -143,7 +148,8 @@ class MainWindow(QMainWindow):
             'atlas_density': 512.0,
             'atlas_size': 2048,
             'mip_flood': False,
-            'mip_flood_levels': 0
+            'mip_flood_levels': 6,
+            'mip_flood_auto': True
         }
         self.apply_dark_theme()
         self.statusBar().showMessage("Ready")
@@ -221,10 +227,6 @@ class MainWindow(QMainWindow):
         self.canvas.set_canvas_size(size)
         self.project_data['atlas_size'] = size
 
-    def on_mip_levels_changed(self, value):
-        self.canvas.mip_flood_levels = value
-        self.project_data['mip_flood_levels'] = value
-
     def on_grid_toggled(self, state):
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
         self.canvas.set_grid_visible(checked)
@@ -234,8 +236,19 @@ class MainWindow(QMainWindow):
     def on_mip_flood_toggled(self, state):
         enabled = Qt.CheckState(state) == Qt.CheckState.Checked
         self.canvas.enable_mip_flood = enabled
-        self.canvas.mip_flood_levels = self.mip_levels_spin.value()
+        self.canvas.mip_flood_levels = 0 if self.mip_levels_auto.isChecked() else self.mip_levels_spin.value()
         self.project_data['mip_flood'] = enabled
+
+    def on_mip_levels_changed(self, value):
+        if not self.mip_levels_auto.isChecked():
+            self.canvas.mip_flood_levels = value
+        self.project_data['mip_flood_levels'] = value
+
+    def on_mip_auto_toggled(self, state):
+        auto = Qt.CheckState(state) == Qt.CheckState.Checked
+        self.mip_levels_spin.setEnabled(not auto)
+        self.canvas.mip_flood_levels = 0 if auto else self.mip_levels_spin.value()
+        self.project_data['mip_flood_auto'] = auto
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
@@ -395,8 +408,9 @@ class MainWindow(QMainWindow):
             self.canvas.set_canvas_size(atlas_size)
             self.grid_chk.setChecked(self.project_data.get('show_grid', False))
             self.mip_flood_chk.setChecked(self.project_data.get('mip_flood', False))
-            self.mip_levels_spin.setValue(int(self.project_data.get('mip_flood_levels', 0)))
-            self.canvas.mip_flood_levels = self.mip_levels_spin.value()
+            self.mip_levels_spin.setValue(int(self.project_data.get('mip_flood_levels', 6)))
+            self.canvas.mip_flood_levels = self.mip_levels_spin.value() if not self.project_data.get('mip_flood_auto', True) else 0
+            self.mip_levels_auto.setChecked(self.project_data.get('mip_flood_auto', True))
 
             # Resample settings
             mode = self.project_data.get('resample_mode', 'lanczos')

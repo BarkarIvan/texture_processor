@@ -2,7 +2,7 @@
 
 Приложение на PySide6 для нарезки масок из исходных текстур и сборки их в атлас с точным масштабом. Dark theme по умолчанию.
 
-![Texture Atlas Editor](Images/screenshot.png)
+![Texture Atlas Editor](Images/tp_preview.png)
 
 ## Возможности
 - Импорт: все изображения (png/jpg/jpeg/tga/bmp) выбранной папки попадают в список.

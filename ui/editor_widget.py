@@ -36,16 +36,39 @@ class HandleItem(QGraphicsEllipseItem):
                  # Let's assume snap is always on if checkbox checked, OR if Shift held.
                  # Let's implement Shift key snap.
                  pass # Logic moved to scene or handled here if we can access modifiers.
-            
-            # Simple grid snap if Shift is held
-            # We can't easily access keyboard state here without passing it.
-            # Let's try QGuiApplication.keyboardModifiers()
             from PySide6.QtGui import QGuiApplication
             if QGuiApplication.keyboardModifiers() & Qt.ShiftModifier:
-                grid_size = 20.0 # Configurable?
-                x = round(new_pos.x() / grid_size) * grid_size
-                y = round(new_pos.y() / grid_size) * grid_size
-                new_pos = QPointF(x, y)
+                points_list = getattr(self.scene(), 'points_ref', [])
+                anchor = None
+                if self in points_list:
+                    idx = points_list.index(self)
+                    if idx > 0:
+                        anchor = points_list[idx - 1].pos()
+                    elif len(points_list) > 1:
+                        anchor = points_list[idx + 1].pos()
+                if anchor:
+                    dx = new_pos.x() - anchor.x()
+                    dy = new_pos.y() - anchor.y()
+                    if dx != 0 or dy != 0:
+                        dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
+                        best_dir = None
+                        best_dot = -1.0
+                        for vx, vy in dirs:
+                            norm = math.hypot(vx, vy)
+                            ux, uy = vx / norm, vy / norm
+                            dot = abs(dx * ux + dy * uy)
+                            if dot > best_dot:
+                                best_dot = dot
+                                best_dir = (ux, uy)
+                        if best_dir:
+                            ux, uy = best_dir
+                            length = dx * ux + dy * uy  # keep projected length
+                            new_pos = QPointF(anchor.x() + ux * length, anchor.y() + uy * length)
+                            if hasattr(self.scene(), 'update_polygon_callback'):
+                                self.scene().update_polygon_callback()
+                            return new_pos
+                if hasattr(self.scene(), 'update_polygon_callback'):
+                    self.scene().update_polygon_callback()
                 return new_pos
 
             if hasattr(self.scene(), 'update_polygon_callback'):
@@ -59,6 +82,24 @@ class HandleItem(QGraphicsEllipseItem):
         if action == delete_action:
             if hasattr(self.scene(), 'delete_point_callback'):
                 self.scene().delete_point_callback(self)
+
+    def mousePressEvent(self, event):
+        # Capture state before move for undo
+        if hasattr(self.scene(), 'push_state_callback'):
+            self.scene().push_state_callback()
+        super().mousePressEvent(event)
+
+class EditablePolygonItem(QGraphicsPolygonItem):
+    def contextMenuEvent(self, event):
+        add_action = None
+        menu = QMenu()
+        add_action = menu.addAction("Add Point Here")
+        action = menu.exec(event.screenPos())
+        if action == add_action:
+            if hasattr(self.scene(), 'insert_point_callback'):
+                self.scene().insert_point_callback(event.scenePos())
+        else:
+            super().contextMenuEvent(event)
 
 class EditorWidget(QWidget):
     mask_applied = Signal(str, list, float, int, object, object) # filepath, points, real_width, original_width, item_ref, mask_id
@@ -79,6 +120,14 @@ class EditorWidget(QWidget):
         self.clear_btn = QPushButton("Clear Mask")
         self.clear_btn.clicked.connect(self.clear_mask)
         tools_layout.addWidget(self.clear_btn)
+
+        self.undo_btn = QPushButton("Undo")
+        self.undo_btn.clicked.connect(self.undo)
+        tools_layout.addWidget(self.undo_btn)
+
+        self.redo_btn = QPushButton("Redo")
+        self.redo_btn.clicked.connect(self.redo)
+        tools_layout.addWidget(self.redo_btn)
 
         # Tool buttons
         self.tool_group = QButtonGroup(self)
@@ -123,6 +172,8 @@ class EditorWidget(QWidget):
         self.scene = QGraphicsScene()
         self.scene.update_polygon_callback = self.update_polygon 
         self.scene.delete_point_callback = self.delete_point
+        self.scene.insert_point_callback = self.insert_point_at
+        self.scene.push_state_callback = self.push_state
         
         self.view = ZoomPanView(self.scene, self)
         layout.addWidget(self.view)
@@ -130,6 +181,7 @@ class EditorWidget(QWidget):
         self.current_image_item = None
         self.current_image_path = None
         self.points = [] 
+        self.scene.points_ref = self.points
         self.polygon_item = None
         self.is_closed = False
         self.editing_item = None 
@@ -139,6 +191,9 @@ class EditorWidget(QWidget):
         self.scale_points = []
         self.scale_line = None
         self.current_mask_id = None
+        self.undo_stack = []
+        self.redo_stack = []
+        self.applying_state = False
 
         self.view.clicked.connect(self.on_view_clicked)
         # Track mouse move for Rect Mode preview
@@ -148,7 +203,7 @@ class EditorWidget(QWidget):
     def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None):
         self.current_image_path = filepath
         self.editing_item = item_ref
-        self.clear_mask()
+        self.clear_mask(reset_history=True)
         self.current_mask_id = mask_id
         
         pixmap = QPixmap(filepath)
@@ -167,7 +222,9 @@ class EditorWidget(QWidget):
         # If scale known and points exist, recompute width automatically
         self.update_width_from_scale()
 
-    def clear_mask(self):
+    def clear_mask(self, reset_history=False):
+        if not reset_history:
+            self.push_state()
         self.scene.clear()
         self.points = []
         self.polygon_item = None
@@ -176,10 +233,15 @@ class EditorWidget(QWidget):
         self.scale_mode_active = False
         self.scale_points = []
         self.scale_line = None
+        self.scene.points_ref = self.points
         self.current_mask_id = None
         self.scene.update_polygon_callback = self.update_polygon
         self.scene.delete_point_callback = self.delete_point
-        
+        self.scene.insert_point_callback = self.insert_point_at
+        self.scene.push_state_callback = self.push_state
+        if reset_history:
+            self.undo_stack = []
+            self.redo_stack = []
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             self.current_image_item = self.scene.addPixmap(pixmap)
@@ -214,6 +276,7 @@ class EditorWidget(QWidget):
             p1, p2 = self.scale_points
             length_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
             if length_px > 0:
+                self.push_state()
                 ref_m = max(0.01, self.scale_length_input.value())
                 self.px_per_meter = length_px / ref_m
                 # Visual line
@@ -301,6 +364,7 @@ class EditorWidget(QWidget):
                 x2 = x1 + size * sign_x
                 y2 = y1 + size * sign_y
             
+            self.push_state()
             self.add_point(QPointF(x2, y1))
             self.add_point(QPointF(x2, y2))
             self.add_point(QPointF(x1, y2))
@@ -312,16 +376,107 @@ class EditorWidget(QWidget):
                 self.rect_preview = None
             self.update_polygon()
 
+    def push_state(self):
+        if self.applying_state:
+            return
+        state = {
+            'points': [(p.pos().x(), p.pos().y()) for p in self.points],
+            'width': self.width_input.value(),
+            'px_per_meter': self.px_per_meter,
+            'scale_line': None  # not restoring line for simplicity
+        }
+        self.undo_stack.append(state)
+        self.redo_stack.clear()
+
+    def undo(self):
+        if not self.undo_stack:
+            return
+        state = self.undo_stack.pop()
+        self.redo_stack.append({
+            'points': [(p.pos().x(), p.pos().y()) for p in self.points],
+            'width': self.width_input.value(),
+            'px_per_meter': self.px_per_meter,
+            'scale_line': None
+        })
+        self.apply_state(state)
+
+    def redo(self):
+        if not self.redo_stack:
+            return
+        state = self.redo_stack.pop()
+        self.undo_stack.append({
+            'points': [(p.pos().x(), p.pos().y()) for p in self.points],
+            'width': self.width_input.value(),
+            'px_per_meter': self.px_per_meter,
+            'scale_line': None
+        })
+        self.apply_state(state)
+
+    def apply_state(self, state):
+        self.applying_state = True
+        self.scene.clear()
+        self.points = []
+        self.polygon_item = None
+        self.is_closed = False
+        self.rect_preview = None
+        self.scale_mode_active = False
+        self.scale_points = []
+        self.scale_line = None
+        self.scene.points_ref = self.points
+        self.scene.update_polygon_callback = self.update_polygon
+        self.scene.delete_point_callback = self.delete_point
+        self.scene.insert_point_callback = self.insert_point_at
+        self.scene.push_state_callback = self.push_state
+        if self.current_image_path:
+            pixmap = QPixmap(self.current_image_path)
+            self.current_image_item = self.scene.addPixmap(pixmap)
+        else:
+            self.current_image_item = None
+
+        for x, y in state.get('points', []):
+            radius = 4.0
+            handle = HandleItem(x, y, radius)
+            self.scene.addItem(handle)
+            self.points.append(handle)
+        self.scene.points_ref = self.points
+        self.width_input.setValue(state.get('width', self.width_input.value()))
+        self.px_per_meter = state.get('px_per_meter')
+        if len(self.points) >= 3:
+            self.is_closed = True
+        self.update_polygon()
+        self.update_width_from_scale()
+        self.applying_state = False
+
     def add_point(self, pos):
         if self.is_closed:
             return
+        self.push_state()
 
         from PySide6.QtGui import QGuiApplication
         if QGuiApplication.keyboardModifiers() & Qt.ShiftModifier:
-            grid_size = 20.0
-            x = round(pos.x() / grid_size) * grid_size
-            y = round(pos.y() / grid_size) * grid_size
-            pos = QPointF(x, y)
+            if self.points:
+                last = self.points[-1].pos()
+                dx = pos.x() - last.x()
+                dy = pos.y() - last.y()
+                if dx != 0 or dy != 0:
+                    # Snap direction to nearest axis/diagonal
+                    dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
+                    best_dir = None
+                    best_dot = -1.0
+                    for vx, vy in dirs:
+                        norm = math.hypot(vx, vy)
+                        ux, uy = vx / norm, vy / norm
+                        dot = abs(dx * ux + dy * uy)
+                        if dot > best_dot:
+                            best_dot = dot
+                            best_dir = (ux, uy)
+                    if best_dir:
+                        ux, uy = best_dir
+                        length = dx * ux + dy * uy  # no extra rounding
+                        pos = QPointF(last.x() + ux * length, last.y() + uy * length)
+            else:
+                # First point: keep as is
+                pass
 
         radius = 4.0 
         handle = HandleItem(pos.x(), pos.y(), radius)
@@ -333,10 +488,46 @@ class EditorWidget(QWidget):
 
     def delete_point(self, handle_item):
         if handle_item in self.points:
+            self.push_state()
             self.points.remove(handle_item)
             self.scene.removeItem(handle_item)
             self.update_polygon()
             self.update_width_from_scale()
+
+    def insert_point_at(self, scene_pos):
+        if len(self.points) < 2:
+            return
+        self.push_state()
+        # Find closest segment
+        min_dist = float('inf')
+        best_point = None
+        best_idx = None
+        n = len(self.points)
+        for i in range(n):
+            p1 = self.points[i].pos()
+            p2 = self.points[(i + 1) % n].pos()
+            v = p2 - p1
+            seg_len_sq = v.x()*v.x() + v.y()*v.y()
+            if seg_len_sq == 0:
+                continue
+            t = ((scene_pos.x() - p1.x()) * v.x() + (scene_pos.y() - p1.y()) * v.y()) / seg_len_sq
+            t = max(0.0, min(1.0, t))
+            proj = QPointF(p1.x() + v.x() * t, p1.y() + v.y() * t)
+            dist_sq = (scene_pos.x() - proj.x())**2 + (scene_pos.y() - proj.y())**2
+            if dist_sq < min_dist:
+                min_dist = dist_sq
+                best_point = proj
+                best_idx = i
+        if best_point is None or best_idx is None:
+            return
+
+        radius = 4.0
+        handle = HandleItem(best_point.x(), best_point.y(), radius)
+        self.scene.addItem(handle)
+        self.points.insert(best_idx + 1, handle)
+        self.scene.points_ref = self.points
+        self.update_polygon()
+        self.update_width_from_scale()
 
     def update_polygon(self):
         if not self.points:
@@ -346,9 +537,13 @@ class EditorWidget(QWidget):
         
         if self.polygon_item:
             self.scene.removeItem(self.polygon_item)
-            
-        self.polygon_item = self.scene.addPolygon(QPolygonF(poly_points), QPen(Qt.green, 0), QBrush(QColor(0, 255, 0, 50)))
-        self.polygon_item.setZValue(0.5)
+        
+        poly_item = EditablePolygonItem(QPolygonF(poly_points))
+        poly_item.setPen(QPen(Qt.green, 0))
+        poly_item.setBrush(QBrush(QColor(0, 255, 0, 50)))
+        poly_item.setZValue(0.5)
+        self.scene.addItem(poly_item)
+        self.polygon_item = poly_item
         
         for h in self.points:
             h.setZValue(1)

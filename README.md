@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 ## Подсказки по интерфейсу
 - Toolbar: Atlas Density (Enter для применения), Grid, Resample, Duplicate, Export, Mip Flood (checkbox + Levels, 0 = авто).
-- Редактор: Polygon/Rect, Set Scale, Apply/Clear, Undo/Redo, Insert Point через контекстное меню.
+- Редактор: Polygon/Rect, Set Scale, Apply/Clear, Undo/Redo, Insert Point через контекстное меню. Перетаскивание всей маски — Ctrl + drag по заливке.
 
 ## Зависимости
 - PySide6

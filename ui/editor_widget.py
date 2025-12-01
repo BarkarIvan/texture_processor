@@ -106,6 +106,11 @@ class EditablePolygonItem(QGraphicsPolygonItem):
         if getattr(self.scene(), 'scale_mode_active', False):
             event.ignore()
             return
+        # Drag polygon only when Ctrl held; otherwise let click pass through for adding points
+        if not (event.modifiers() & Qt.ControlModifier):
+            self.dragging = False
+            event.ignore()
+            return
         if hasattr(self.scene(), 'push_state_callback'):
             self.scene().push_state_callback()
         self.dragging = True

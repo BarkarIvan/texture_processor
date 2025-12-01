@@ -41,7 +41,6 @@ class MainWindow(QMainWindow):
         self.density_input.setPrefix("Density ")
         self.density_input.setSuffix(" px/m")
         self.density_input.setFixedWidth(160)
-        self.density_input.setStyleSheet("font-size: 11px;")
         self.density_input.valueChanged.connect(self.on_density_changed)
         self.toolbar.addWidget(self.density_input)
         
@@ -50,7 +49,6 @@ class MainWindow(QMainWindow):
         self.size_combo.setCurrentText("2048")
         self.size_combo.currentTextChanged.connect(self.on_size_changed)
         self.size_combo.setFixedWidth(90)
-        self.size_combo.setStyleSheet("font-size: 11px;")
         self.toolbar.addWidget(self.size_combo)
 
         self.grid_chk = QCheckBox("Grid")
@@ -86,7 +84,6 @@ class MainWindow(QMainWindow):
         self.mip_levels_spin.setRange(1, 16)
         self.mip_levels_spin.setValue(6)
         self.mip_levels_spin.setPrefix("Levels ")
-        self.mip_levels_spin.setStyleSheet("font-size: 11px;")
         self.mip_levels_spin.valueChanged.connect(self.on_mip_levels_changed)
         self.toolbar.addWidget(self.mip_levels_spin)
         self.mip_levels_auto = QCheckBox("Auto")
@@ -160,56 +157,57 @@ class MainWindow(QMainWindow):
         # Simple dark palette
         self.setStyleSheet("""
         QMainWindow, QWidget {
-            background: #1e1f24;
-            color: #e8e8ea;
-            font-family: 'Segoe UI', 'Inter', sans-serif;
-            font-size: 11px;
+            background: #0f1115;
+            color: #e7e9ef;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            font-size: 9pt;
         }
         QToolBar {
-            background: #2a2c32;
-            spacing: 6px;
-            padding: 4px;
+            background: #161922;
+            spacing: 8px;
+            padding: 6px 10px;
             border: 0px;
         }
         QToolBar QToolButton, QToolBar QLabel {
-            color: #f0f0f2;
+            color: #e7e9ef;
         }
         QToolBar QToolButton:hover {
-            background: #3a3c44;
+            background: #202534;
         }
         QToolBar QToolButton:pressed {
-            background: #444650;
+            background: #2b3245;
         }
         QComboBox, QDoubleSpinBox, QSpinBox, QLineEdit {
-            background: #2f3138;
-            border: 1px solid #3f414a;
-            padding: 2px 6px;
-            color: #f0f0f2;
-            border-radius: 4px;
+            background: #131722;
+            border: 1px solid #242a3a;
+            padding: 3px 8px;
+            color: #e7e9ef;
+            border-radius: 6px;
         }
         QCheckBox { color: #f0f0f2; }
         QListWidget, QGraphicsView {
-            background: #22242a;
-            border: 1px solid #31343c;
+            background: #0f1115;
+            border: 1px solid #1e2230;
         }
         QPushButton {
-            background: #3a7ca5;
-            border: 1px solid #3a7ca5;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
+            background: #2d76ff;
+            border: 1px solid #2d76ff;
+            color: #f7f8fb;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-weight: 600;
         }
-        QPushButton:hover { background: #4492c1; }
-        QPushButton:pressed { background: #377192; }
+        QPushButton:hover { background: #3b82ff; }
+        QPushButton:pressed { background: #1f62d6; }
         QMenu {
-            background: #2a2c32;
-            color: #f0f0f2;
-            border: 1px solid #3f414a;
+            background: #161922;
+            color: #e7e9ef;
+            border: 1px solid #242a3a;
         }
-        QMenu::item:selected { background: #3a3c44; }
+        QMenu::item:selected { background: #202534; }
         QStatusBar {
-            background: #2a2c32;
-            color: #f0f0f2;
+            background: #161922;
+            color: #e7e9ef;
         }
         """)
 

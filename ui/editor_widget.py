@@ -207,20 +207,20 @@ class EditorWidget(QWidget):
         # Tool button styles for selected state
         btn_style = """
         QToolButton {
-            background: #2b2d33;
-            color: #f0f0f2;
-            border: 1px solid #3f414a;
+            background: #131722;
+            color: #e7e9ef;
+            border: 1px solid #242a3a;
             padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 11px;
+            border-radius: 6px;
+            font-size: 9pt;
         }
         QToolButton:checked {
-            background: #3a7ca5;
-            border: 1px solid #3a7ca5;
-            color: white;
+            background: #2d76ff;
+            border: 1px solid #2d76ff;
+            color: #f7f8fb;
         }
         QToolButton:hover {
-            background: #353740;
+            background: #202534;
         }
         """
         self.poly_tool.setStyleSheet(btn_style)
@@ -229,14 +229,15 @@ class EditorWidget(QWidget):
 
         btn_normal_style = """
         QPushButton {
-            background: #2f3138;
-            border: 1px solid #3f414a;
-            color: #f0f0f2;
-            padding: 4px 10px;
-            border-radius: 4px;
+            background: #1b2030;
+            border: 1px solid #242a3a;
+            color: #e7e9ef;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 9pt;
         }
-        QPushButton:hover { background: #353740; }
-        QPushButton:pressed { background: #3a7ca5; border-color: #3a7ca5; }
+        QPushButton:hover { background: #202534; }
+        QPushButton:pressed { background: #2d76ff; border-color: #2d76ff; }
         """
         for b in (self.apply_btn, self.clear_btn, self.undo_btn, self.redo_btn):
             b.setStyleSheet(btn_normal_style)

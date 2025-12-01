@@ -42,31 +42,27 @@ class HandleItem(QGraphicsEllipseItem):
                 anchor = None
                 if self in points_list:
                     idx = points_list.index(self)
-                    if idx > 0:
-                        anchor = points_list[idx - 1].pos()
-                    elif len(points_list) > 1:
-                        anchor = points_list[idx + 1].pos()
+                    # choose nearest neighbor (prev/next)
+                    prev_pt = points_list[idx - 1].pos() if idx > 0 else None
+                    next_pt = points_list[idx + 1].pos() if idx + 1 < len(points_list) else None
+                    if prev_pt and next_pt:
+                        if (prev_pt - new_pos).manhattanLength() <= (next_pt - new_pos).manhattanLength():
+                            anchor = prev_pt
+                        else:
+                            anchor = next_pt
+                    else:
+                        anchor = prev_pt or next_pt
                 if anchor:
                     dx = new_pos.x() - anchor.x()
                     dy = new_pos.y() - anchor.y()
-                    if dx != 0 or dy != 0:
-                        dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
-                        best_dir = None
-                        best_dot = -1.0
-                        for vx, vy in dirs:
-                            norm = math.hypot(vx, vy)
-                            ux, uy = vx / norm, vy / norm
-                            dot = abs(dx * ux + dy * uy)
-                            if dot > best_dot:
-                                best_dot = dot
-                                best_dir = (ux, uy)
-                        if best_dir:
-                            ux, uy = best_dir
-                            length = dx * ux + dy * uy  # keep projected length
-                            new_pos = QPointF(anchor.x() + ux * length, anchor.y() + uy * length)
-                            if hasattr(self.scene(), 'update_polygon_callback'):
-                                self.scene().update_polygon_callback()
-                            return new_pos
+                    # Snap to axis relative to nearest neighbor
+                    if abs(dx) > abs(dy):
+                        new_pos = QPointF(new_pos.x(), anchor.y())
+                    else:
+                        new_pos = QPointF(anchor.x(), new_pos.y())
+                    if hasattr(self.scene(), 'update_polygon_callback'):
+                        self.scene().update_polygon_callback()
+                    return new_pos
                 if hasattr(self.scene(), 'update_polygon_callback'):
                     self.scene().update_polygon_callback()
                 return new_pos
@@ -260,6 +256,7 @@ class EditorWidget(QWidget):
         self.points = [] 
         self.scene.points_ref = self.points
         self.polygon_item = None
+        # Polygon mode is never auto-closed; Rect mode sets is_closed explicitly
         self.is_closed = False
         self.editing_item = None 
         self.rect_preview = None
@@ -515,6 +512,8 @@ class EditorWidget(QWidget):
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             self.current_image_item = self.scene.addPixmap(pixmap)
+            self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
+            self.current_image_item.setZValue(-1)
         else:
             self.current_image_item = None
 
@@ -526,8 +525,7 @@ class EditorWidget(QWidget):
         self.scene.points_ref = self.points
         self.width_input.setValue(state.get('width', self.width_input.value()))
         self.px_per_meter = state.get('px_per_meter')
-        if len(self.points) >= 3:
-            self.is_closed = True
+        self.is_closed = False
         self.update_polygon()
         self.update_width_from_scale()
         self.applying_state = False

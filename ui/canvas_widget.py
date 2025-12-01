@@ -526,9 +526,9 @@ class CanvasWidget(QWidget):
             mask_ds = mask_blocks.max(axis=(1, 3))
             # Downscale color weighted by coverage
             color_blocks = img_arr.reshape(h2, 2, w2, 2, 3)
-            coverage = mask_blocks.sum(axis=(1, 3)).reshape(h2, w2, 1)
+            coverage = mask_blocks.sum(axis=(1, 3)).reshape(h2, w2, 1).astype(np.float32)
             summed = (color_blocks * mask_blocks[..., None]).sum(axis=(1, 3))
-            color_ds = np.where(coverage > 0, summed / coverage, 0.0)
+            color_ds = np.divide(summed, coverage, out=np.zeros_like(summed, dtype=np.float32), where=coverage > 0)
             colors.append(color_ds)
             masks.append(mask_ds)
             if h2 == 1 and w2 == 1:

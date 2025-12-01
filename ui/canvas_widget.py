@@ -141,6 +141,7 @@ class CanvasWidget(QWidget):
         self.scene.selectionChanged.connect(self.on_selection_changed)
         self.view.viewport().setMouseTracking(True)
         self.view.setMouseTracking(True)
+        self.view.hoverMoved.connect(self.forward_hover)
 
     def set_atlas_density(self, density, show_progress=False):
         self.atlas_density = density
@@ -191,14 +192,8 @@ class CanvasWidget(QWidget):
                 pos = item.pos()
                 item.setPos(round(pos.x()), round(pos.y()))
 
-    def mouseMoveEvent(self, event):
-        if self.view and self.scene:
-            scene_pos = self.view.mapToScene(event.pos())
-            # Approximate zoom factor (scale from transform)
-            m = self.view.transform()
-            zoom = m.m11()
-            self.hover_changed.emit(scene_pos.x(), scene_pos.y(), zoom)
-        super().mouseMoveEvent(event)
+    def forward_hover(self, scene_pos, zoom):
+        self.hover_changed.emit(scene_pos.x(), scene_pos.y(), zoom)
 
     def regenerate_item_pixmap(self, item):
         if item.filepath and item.points and item.real_width and item.original_width:

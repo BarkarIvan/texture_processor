@@ -6,6 +6,7 @@ class ZoomPanView(QGraphicsView):
     clicked = Signal(QPointF) # Emits scene pos on left click
     mouseMoved = Signal(QPointF) # Emits scene pos on move with left button
     leftReleased = Signal(QPointF) # Emits scene pos on left release
+    hoverMoved = Signal(QPointF, float) # Emits scene pos and zoom on hover
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
@@ -16,6 +17,10 @@ class ZoomPanView(QGraphicsView):
         # Full viewport updates prevent paint trails when dragging items
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self._last_pan_pos = None
+        # Track hover
+        self.setMouseTracking(True)
+        if self.viewport():
+            self.viewport().setMouseTracking(True)
 
     def wheelEvent(self, event):
         factor = 1.1 if event.angleDelta().y() > 0 else 0.9
@@ -59,6 +64,10 @@ class ZoomPanView(QGraphicsView):
             self.mouseMoved.emit(scene_pos)
             super().mouseMoveEvent(event)
         else:
+            # Hover update
+            scene_pos = self.mapToScene(event.pos())
+            zoom = self.transform().m11()
+            self.hoverMoved.emit(scene_pos, zoom)
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):

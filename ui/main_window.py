@@ -1,4 +1,7 @@
-from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy
+import json
+import os
+from pathlib import Path
+from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy, QListWidget, QListWidgetItem, QPushButton, QLineEdit, QMessageBox
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication, QVBoxLayout as QVBoxLayoutWidget
@@ -74,12 +77,15 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_atlas)
         self.toolbar.addAction(export_action)
         self.toolbar.addSeparator()
+        aliases_action = QAction("Path Aliases", self)
+        aliases_action.triggered.connect(self.edit_aliases)
+        self.toolbar.addAction(aliases_action)
+        self.toolbar.addSeparator()
         # Mip Flood toggle
         self.mip_flood_chk = QCheckBox("Mip Flood")
         self.mip_flood_chk.setToolTip("Replace alpha outside mask with downscaled mips on export")
         self.mip_flood_chk.stateChanged.connect(self.on_mip_flood_toggled)
         self.toolbar.addWidget(self.mip_flood_chk)
-        self.mip_levels_spin = QSpinBox()
         self.mip_levels_spin = QSpinBox()
         self.mip_levels_spin.setRange(1, 16)
         self.mip_levels_spin.setValue(6)
@@ -151,6 +157,8 @@ class MainWindow(QMainWindow):
         self.apply_dark_theme()
         self.statusBar().showMessage("Ready")
         self.canvas.hover_changed.connect(self.update_status)
+        self.alias_file = os.path.join(str(Path.home()), ".texture_processor_aliases.json")
+        self.path_aliases = self.load_aliases()
         self.mip_flood_chk.setChecked(False)
 
     def apply_dark_theme(self):
@@ -356,12 +364,13 @@ class MainWindow(QMainWindow):
             self.project_data['show_grid'] = self.grid_chk.isChecked()
             self.project_data['mip_flood'] = self.mip_flood_chk.isChecked()
             self.project_data['mip_flood_levels'] = self.mip_levels_spin.value()
+            self.project_data['mip_flood_auto'] = self.mip_levels_auto.isChecked()
             # Capture item positions
             items_data = []
             for it in self.canvas.scene.items():
                 if isinstance(it, AtlasItem):
                     items_data.append({
-                        'filepath': it.filepath,
+                        'filepath': getattr(it, 'original_filepath', it.filepath),
                         'mask_id': getattr(it, 'mask_id', None),
                         'x': it.pos().x(),
                         'y': it.pos().y()
@@ -375,8 +384,6 @@ class MainWindow(QMainWindow):
             filepath, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "JSON Files (*.json)")
         
         if filepath:
-            import json
-            import os
             with open(filepath, 'r') as f:
                 self.project_data = json.load(f)
 
@@ -395,8 +402,11 @@ class MainWindow(QMainWindow):
                     }
             
             base_path = self.project_data.get('base_path')
-            if base_path and os.path.exists(base_path):
-                self.browser.load_images(base_path)
+            if base_path:
+                resolved_base = self.resolve_path(base_path)
+                if resolved_base and os.path.exists(resolved_base):
+                    self.project_data['base_path'] = resolved_base
+                    self.browser.load_images(resolved_base)
             
             # Restore settings
             self.density_input.setValue(self.project_data.get('atlas_density', 512.0))
@@ -409,6 +419,9 @@ class MainWindow(QMainWindow):
             self.mip_levels_spin.setValue(int(self.project_data.get('mip_flood_levels', 6)))
             self.canvas.mip_flood_levels = self.mip_levels_spin.value() if not self.project_data.get('mip_flood_auto', True) else 0
             self.mip_levels_auto.setChecked(self.project_data.get('mip_flood_auto', True))
+            # Reapply levels based on auto flag
+            if self.mip_levels_auto.isChecked():
+                self.canvas.mip_flood_levels = 0
 
             # Resample settings
             mode = self.project_data.get('resample_mode', 'lanczos')
@@ -430,6 +443,9 @@ class MainWindow(QMainWindow):
                 dlg.show()
             item_map = {}
             for idx, (filepath, data) in enumerate(tex_items, start=1):
+                orig_path = filepath
+                resolved_path = self.resolve_path(filepath)
+                file_for_io = resolved_path if resolved_path and os.path.exists(resolved_path) else orig_path
                 masks = data.get('masks')
                 if masks:
                     for m in masks:
@@ -438,18 +454,18 @@ class MainWindow(QMainWindow):
                         original_width = m.get('original_width')
                         mask_id = m.get('id')
                         if points:
-                            item = self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=mask_id, show_progress=True)
+                            item = self.canvas.add_fragment(file_for_io, points, real_width, original_width, mask_id=mask_id, show_progress=True, original_path=orig_path)
                             if item:
-                                item_map[(filepath, mask_id)] = item
+                                item_map[(orig_path, mask_id)] = item
                 else:
                     # Legacy single mask structure
                     points = data.get('points')
                     real_width = data.get('real_width')
                     original_width = data.get('original_width')
                     if points:
-                        item = self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=1, show_progress=True)
+                        item = self.canvas.add_fragment(file_for_io, points, real_width, original_width, mask_id=1, show_progress=True, original_path=orig_path)
                         if item:
-                            item_map[(filepath, 1)] = item
+                            item_map[(orig_path, 1)] = item
                 if dlg:
                     dlg.setValue(idx)
                     QApplication.processEvents()
@@ -537,3 +553,95 @@ class MainWindow(QMainWindow):
 
     def update_status(self, x, y, zoom):
         self.statusBar().showMessage(f"Pos: ({x:.1f}, {y:.1f}) | Zoom: {zoom:.2f} | Density: {self.density_input.value():.0f} px/m")
+
+    def load_aliases(self):
+        try:
+            if os.path.exists(self.alias_file):
+                with open(self.alias_file, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+        except Exception:
+            pass
+        return {}
+
+    def save_aliases(self):
+        try:
+            with open(self.alias_file, 'w') as f:
+                json.dump(self.path_aliases, f, indent=2)
+        except Exception:
+            pass
+
+    def resolve_path(self, path_str):
+        if not path_str:
+            return path_str
+        path_str = os.path.expandvars(path_str)
+        if os.path.exists(path_str):
+            return path_str
+        # Try replace known prefixes (longest first)
+        best = path_str
+        prefixes = sorted(self.path_aliases.keys(), key=lambda p: len(p), reverse=True)
+        for src in prefixes:
+            if path_str.startswith(src):
+                candidate = path_str.replace(src, self.path_aliases[src], 1)
+                if os.path.exists(candidate):
+                    return candidate
+                best = candidate
+        return best
+
+    def edit_aliases(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Path Aliases")
+        layout = QVBoxLayoutWidget(dialog)
+
+        list_widget = QListWidget()
+        for src, dst in self.path_aliases.items():
+            item = QListWidgetItem(f"{src} -> {dst}")
+            item.setData(Qt.UserRole, (src, dst))
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+
+        form = QFormLayout()
+        src_edit = QLineEdit()
+        dst_edit = QLineEdit()
+        form.addRow("Stored prefix", src_edit)
+        form.addRow("Local prefix", dst_edit)
+        layout.addLayout(form)
+
+        add_btn = QPushButton("Add/Update")
+        remove_btn = QPushButton("Remove selected")
+        buttons = QHBoxLayout()
+        buttons.addWidget(add_btn)
+        buttons.addWidget(remove_btn)
+        layout.addLayout(buttons)
+
+        def add_alias():
+            src = src_edit.text().strip()
+            dst = dst_edit.text().strip()
+            if not src or not dst:
+                QMessageBox.warning(dialog, "Invalid", "Both prefixes are required.")
+                return
+            self.path_aliases[src] = dst
+            list_widget.clear()
+            for s, d in self.path_aliases.items():
+                item = QListWidgetItem(f"{s} -> {d}")
+                item.setData(Qt.UserRole, (s, d))
+                list_widget.addItem(item)
+
+        def remove_alias():
+            item = list_widget.currentItem()
+            if not item:
+                return
+            src, dst = item.data(Qt.UserRole)
+            self.path_aliases.pop(src, None)
+            list_widget.takeItem(list_widget.row(item))
+
+        add_btn.clicked.connect(add_alias)
+        remove_btn.clicked.connect(remove_alias)
+
+        buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons_box)
+        buttons_box.accepted.connect(lambda: (self.save_aliases(), dialog.accept()))
+        buttons_box.rejected.connect(dialog.reject)
+
+        dialog.exec()

@@ -1,12 +1,18 @@
 from collections import OrderedDict
 import math
 import numpy as np
+import sys
+from pathlib import Path
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image, ImageChops
 from PIL.ImageQt import ImageQt
-from .view_utils import ZoomPanView
+try:
+    from .view_utils import ZoomPanView
+except Exception:
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from view_utils import ZoomPanView
 
 class AtlasItem(QGraphicsPixmapItem):
     def __init__(self, pixmap, parent=None):
@@ -18,6 +24,7 @@ class AtlasItem(QGraphicsPixmapItem):
         
         # Metadata
         self.filepath = None
+        self.original_filepath = None
         self.points = None
         self.real_width = None
         self.original_width = None
@@ -378,7 +385,7 @@ class CanvasWidget(QWidget):
             out = out[:, :, 0]
         return Image.fromarray(out, mode=image.mode)
 
-    def add_fragment(self, image_path, points, real_width, original_width, mask_id=None, show_progress=False):
+    def add_fragment(self, image_path, points, real_width, original_width, mask_id=None, show_progress=False, original_path=None):
         def build():
             return self.create_masked_pixmap(image_path, points, real_width, original_width)
 
@@ -402,6 +409,7 @@ class CanvasWidget(QWidget):
         
         # Store metadata
         item.filepath = image_path
+        item.original_filepath = original_path or getattr(item, "original_filepath", image_path)
         item.points = points
         item.real_width = real_width
         item.original_width = original_width
@@ -441,6 +449,8 @@ class CanvasWidget(QWidget):
         item.original_width = original_width
         if mask_id is not None:
             item.mask_id = mask_id
+        if not hasattr(item, "original_filepath"):
+            item.original_filepath = item.filepath
         if self.scene.snap_items_to_pixel:
             pos = item.pos()
             item.setPos(round(pos.x()), round(pos.y()))

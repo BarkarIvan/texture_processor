@@ -76,6 +76,10 @@ class MainWindow(QMainWindow):
         export_action = QAction("Export PNG", self)
         export_action.triggered.connect(self.export_atlas)
         self.toolbar.addAction(export_action)
+
+        export_obj_action = QAction("Export OBJ", self)
+        export_obj_action.triggered.connect(self.export_obj_meshes)
+        self.toolbar.addAction(export_obj_action)
         self.toolbar.addSeparator()
         aliases_action = QAction("Path Aliases", self)
         aliases_action.triggered.connect(self.edit_aliases)
@@ -487,6 +491,24 @@ class MainWindow(QMainWindow):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export Atlas", "", "PNG Files (*.png)")
         if filepath:
             self.canvas.export_atlas(filepath)
+
+    def export_obj_meshes(self):
+        filepath, _ = QFileDialog.getSaveFileName(self, "Export Meshes", "", "OBJ Files (*.obj)")
+        if not filepath:
+            return
+        if not filepath.lower().endswith(".obj"):
+            filepath += ".obj"
+
+        obj_text, err = self.canvas.generate_obj()
+        if err:
+            QMessageBox.warning(self, "Export Failed", err)
+            return
+
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(obj_text)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", str(e))
 
     def open_resample_settings(self):
         dialog = QDialog(self)

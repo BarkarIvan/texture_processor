@@ -464,6 +464,84 @@ class CanvasWidget(QWidget):
         
         item.setScale(1.0)
 
+    def generate_obj(self):
+        """Generate an OBJ string with one object per mask (AtlasItem)."""
+        items = [it for it in self.scene.items() if isinstance(it, AtlasItem)]
+        if not items:
+            return None, "No items on atlas to export."
+
+        atlas_rect = self.scene.sceneRect()
+        atlas_w = atlas_rect.width()
+        atlas_h = atlas_rect.height()
+        if atlas_w <= 0 or atlas_h <= 0:
+            return None, "Invalid atlas size."
+
+        # Sort for determinism: mask_id, original path, position
+        items.sort(key=lambda it: (
+            getattr(it, "mask_id", 0) or 0,
+            getattr(it, "original_filepath", "") or "",
+            it.pos().x(),
+            it.pos().y(),
+        ))
+
+        lines = [
+            "# Texture Atlas Editor OBJ export",
+            f"# atlas_size {int(atlas_w)}x{int(atlas_h)}",
+            f"# atlas_density_px_per_m {self.atlas_density}",
+            "# coordinate system: origin at atlas top-left, exported with +Y up (Blender-friendly)",
+        ]
+
+        v_idx = 1
+        vt_idx = 1
+
+        for idx, item in enumerate(items, start=1):
+            if not item.points or not item.real_width or not item.original_width:
+                continue
+
+            poly = QPolygonF([QPointF(x, y) for x, y in item.points])
+            bbox = poly.boundingRect().toAlignedRect()
+            if bbox.width() <= 0 or bbox.height() <= 0:
+                continue
+
+            scale = (self.atlas_density * item.real_width) / item.original_width
+            # Points on atlas in pixels (top-left origin, +Y down)
+            scaled_points = []
+            for x, y in item.points:
+                local_x = (x - bbox.left()) * scale
+                local_y = (y - bbox.top()) * scale
+                atlas_x = item.pos().x() + local_x
+                atlas_y = item.pos().y() + local_y
+                scaled_points.append((atlas_x, atlas_y))
+
+            # Flip Y to Blender's +Y up; reverse order to keep normal winding
+            flipped_points = [(ax, atlas_h - ay) for ax, ay in scaled_points]
+            flipped_points = list(reversed(flipped_points))
+            uv_points = list(reversed(scaled_points))
+
+            mask_id = getattr(item, "mask_id", None) or idx
+            lines.append(f"o mask_{mask_id}")
+
+            # Vertex positions in meters, Z=0
+            for ax, ay in flipped_points:
+                mx = ax / self.atlas_density
+                my = ay / self.atlas_density
+                lines.append(f"v {mx:.6f} {my:.6f} 0.000000")
+
+            # UVs normalized to atlas size, V flipped to bottom-left origin (Blender-friendly), order matches face
+            for ax, ay in uv_points:
+                u = ax / atlas_w
+                v = 1.0 - (ay / atlas_h)
+                lines.append(f"vt {u:.6f} {v:.6f}")
+
+            # One face per mask (n-gon), matching vertex/uv order
+            face = " ".join(f"{v_idx + i}/{vt_idx + i}" for i in range(len(flipped_points)))
+            lines.append(f"f {face}")
+
+            v_idx += len(flipped_points)
+            vt_idx += len(flipped_points)
+
+        return "\n".join(lines) + "\n", None
+
     def export_atlas(self, filename):
         rect = self.scene.sceneRect()
         image = QImage(int(rect.width()), int(rect.height()), QImage.Format_ARGB32)

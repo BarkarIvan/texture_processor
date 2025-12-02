@@ -40,3 +40,9 @@ pip install -r requirements.txt
 - PySide6
 - Pillow
 - numpy
+
+## OBJ export (новое)
+- Тулбар → Export OBJ.
+- Один объект (o mask_<id>) на маску, грань — n-gon по точкам маски.
+- Вершины: метры (px / atlas_density), координатная система с +Y вверх для удобства в Blender, Z=0.
+- UV: нормализованы к размеру атласа, origin внизу-слева (Blender-friendly).

@@ -4,6 +4,7 @@
 
 ![Texture Atlas Editor](Images/tp_preview.png)
 ![Mip flood on export](Images/mip_flood.png)
+![obj export](Images/obj_export.png)
 
 ## Возможности
 - Импорт всех изображений из папки (png/jpg/jpeg/tga/bmp) в список с превью.

@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy, QListWidget, QListWidgetItem, QPushButton, QLineEdit, QMessageBox
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtGui import QAction, QActionGroup, QColor
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox as QDoubleSpinBoxWidget, QProgressDialog, QApplication, QVBoxLayout as QVBoxLayoutWidget
 from .browser_widget import BrowserWidget
@@ -165,6 +165,18 @@ class MainWindow(QMainWindow):
         self.path_aliases = self.load_aliases()
         self.mip_flood_chk.setChecked(False)
 
+    def generate_mask_color(self, mask_id):
+        hue = ((mask_id or 1) * 73) % 360
+        c = QColor()
+        c.setHsv(hue, 200, 255)
+        return c.name()
+
+    def ensure_mask_colors(self, masks):
+        for m in masks:
+            if m.get('color'):
+                continue
+            m['color'] = self.generate_mask_color(m.get('id'))
+
     def apply_dark_theme(self):
         # Simple dark palette
         self.setStyleSheet("""
@@ -265,11 +277,15 @@ class MainWindow(QMainWindow):
         data = self.project_data['textures'].setdefault(filepath, {'px_per_meter': None, 'masks': []})
         px_per_meter = data.get('px_per_meter')
         # For new mask creation, start blank but keep scale info if available
-        self.editor.load_image(filepath, None, None, px_per_meter=px_per_meter) # Clears editing_item
+        self.ensure_mask_colors(data.get('masks', []))
+        masks = data.get('masks', [])
+        active_id = masks[0].get('id') if masks else None
+        self.editor.load_image(filepath, None, None, px_per_meter=px_per_meter, mask_id=active_id, masks=masks) # Clears editing_item
         
     def on_item_edit_requested(self, item):
         # Load item into editor
         data = self.project_data['textures'].setdefault(item.filepath, {'px_per_meter': None, 'masks': []})
+        self.ensure_mask_colors(data.get('masks', []))
         px_per_meter = data.get('px_per_meter')
         mask_entry = None
         for m in data.get('masks', []):
@@ -279,7 +295,7 @@ class MainWindow(QMainWindow):
         points = mask_entry.get('points') if mask_entry else item.points
         real_width = mask_entry.get('real_width') if mask_entry else item.real_width
         original_width = mask_entry.get('original_width') if mask_entry else item.original_width
-        self.editor.load_image(item.filepath, points, real_width, item, px_per_meter, getattr(item, 'mask_id', None))
+        self.editor.load_image(item.filepath, points, real_width, item, px_per_meter, getattr(item, 'mask_id', None), masks=data.get('masks', []))
         
     def on_mask_applied(self, filepath, points, real_width, original_width, item_ref, mask_id):
         # Ensure texture entry
@@ -287,6 +303,7 @@ class MainWindow(QMainWindow):
             'px_per_meter': self.editor.px_per_meter,
             'masks': []
         })
+        self.ensure_mask_colors(tex_entry.get('masks', []))
         if self.editor.px_per_meter:
             tex_entry['px_per_meter'] = self.editor.px_per_meter
 
@@ -307,6 +324,8 @@ class MainWindow(QMainWindow):
             existing['points'] = points
             existing['real_width'] = real_width
             existing['original_width'] = original_width
+            if not existing.get('color'):
+                existing['color'] = self.generate_mask_color(mask_id)
         else:
             # Assign new id
             next_id = max([m.get('id', 0) for m in tex_entry['masks']] + [0]) + 1
@@ -315,15 +334,36 @@ class MainWindow(QMainWindow):
                 'id': mask_id,
                 'points': points,
                 'real_width': real_width,
-                'original_width': original_width
+                'original_width': original_width,
+                'color': self.generate_mask_color(mask_id)
             })
 
-        if item_ref:
-            item_ref.mask_id = mask_id
-            self.canvas.update_item(item_ref, points, real_width, original_width, mask_id=mask_id, show_progress=True)
+        def _same_path(a, b):
+            try:
+                return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+            except Exception:
+                return a == b
+
+        target_item = item_ref
+        if not target_item:
+            # Try to find existing atlas item for this filepath/mask_id
+            for it in self.canvas.scene.items():
+                if not isinstance(it, AtlasItem):
+                    continue
+                path_match = getattr(it, 'original_filepath', it.filepath)
+                if getattr(it, 'mask_id', None) == mask_id and (_same_path(path_match, filepath) or _same_path(getattr(it, 'filepath', ''), filepath)):
+                    target_item = it
+                    break
+
+        if target_item:
+            target_item.mask_id = mask_id
+            self.canvas.update_item(target_item, points, real_width, original_width, mask_id=mask_id, show_progress=True)
         else:
             # Add new item
             self.canvas.add_fragment(filepath, points, real_width, original_width, mask_id=mask_id, show_progress=True)
+
+        # Refresh editor overlays/selection
+        self.editor.refresh_masks_view(filepath, tex_entry.get('masks', []), mask_id)
 
     def duplicate_selected_items(self):
         selected = [it for it in self.canvas.scene.selectedItems() if isinstance(it, AtlasItem)]
@@ -332,6 +372,7 @@ class MainWindow(QMainWindow):
         offset = QPointF(20, 20)
         for it in selected:
             tex_entry = self.project_data['textures'].setdefault(it.filepath, {'px_per_meter': None, 'masks': []})
+            self.ensure_mask_colors(tex_entry.get('masks', []))
             if tex_entry.get('px_per_meter') is None and self.editor.px_per_meter:
                 tex_entry['px_per_meter'] = self.editor.px_per_meter
             next_id = max([m.get('id', 0) for m in tex_entry['masks']] + [0]) + 1
@@ -339,7 +380,8 @@ class MainWindow(QMainWindow):
                 'id': next_id,
                 'points': it.points,
                 'real_width': it.real_width,
-                'original_width': it.original_width
+                'original_width': it.original_width,
+                'color': self.generate_mask_color(next_id)
             })
             new_item = self.canvas.add_fragment(it.filepath, it.points, it.real_width, it.original_width, mask_id=next_id, show_progress=True)
             if new_item:
@@ -404,6 +446,7 @@ class MainWindow(QMainWindow):
                             'original_width': data.get('original_width')
                         }]
                     }
+                self.ensure_mask_colors(textures[tex_path].get('masks', []))
             
             base_path = self.project_data.get('base_path')
             if base_path:

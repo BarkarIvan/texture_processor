@@ -1,7 +1,7 @@
 import math
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup, QSizePolicy
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QGuiApplication
-from PySide6.QtCore import Qt, QPointF, Signal, QRectF
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup, QSizePolicy, QComboBox, QGraphicsLineItem
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QPainterPathStroker, QGuiApplication
+from PySide6.QtCore import Qt, QPointF, Signal, QRectF, QLineF
 from .view_utils import ZoomPanView
 
 class HandleItem(QGraphicsEllipseItem):
@@ -25,19 +25,9 @@ class HandleItem(QGraphicsEllipseItem):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange:
             new_pos = value
-            # Snap logic
-            if hasattr(self.scene(), 'snap_enabled') and self.scene().snap_enabled:
-                 # Check for Shift key? Or just always snap if enabled?
-                 # User asked for "snap ... for example when button pressed".
-                 # Let's check modifiers.
-                 modifiers = self.scene().views()[0].modifiers() if self.scene().views() else Qt.NoModifier
-                 # Wait, accessing views from item is risky.
-                 # Better: Scene stores state.
-                 # Let's assume snap is always on if checkbox checked, OR if Shift held.
-                 # Let's implement Shift key snap.
-                 pass # Logic moved to scene or handled here if we can access modifiers.
             from PySide6.QtGui import QGuiApplication
-            if QGuiApplication.keyboardModifiers() & Qt.ShiftModifier:
+            modifiers = QGuiApplication.keyboardModifiers()
+            if modifiers & Qt.ShiftModifier:
                 points_list = getattr(self.scene(), 'points_ref', [])
                 anchor = None
                 if self in points_list:
@@ -60,13 +50,23 @@ class HandleItem(QGraphicsEllipseItem):
                         new_pos = QPointF(new_pos.x(), anchor.y())
                     else:
                         new_pos = QPointF(anchor.x(), new_pos.y())
-                    if hasattr(self.scene(), 'update_polygon_callback'):
-                        self.scene().update_polygon_callback()
-                    return new_pos
-                if hasattr(self.scene(), 'update_polygon_callback'):
-                    self.scene().update_polygon_callback()
-                return new_pos
 
+            # Snap to guides (vertical/horizontal)
+            scene = self.scene()
+            if scene:
+                threshold = getattr(scene, 'guide_snap_threshold', None)
+                guides_v = getattr(scene, 'guides_v', [])
+                guides_h = getattr(scene, 'guides_h', [])
+                if threshold is not None:
+                    closest_v = min(guides_v, key=lambda g: abs(g - new_pos.x()), default=None) if guides_v else None
+                    if closest_v is not None and abs(closest_v - new_pos.x()) <= threshold:
+                        new_pos = QPointF(closest_v, new_pos.y())
+                    closest_h = min(guides_h, key=lambda g: abs(g - new_pos.y()), default=None) if guides_h else None
+                    if closest_h is not None and abs(closest_h - new_pos.y()) <= threshold:
+                        new_pos = QPointF(new_pos.x(), closest_h)
+                if hasattr(scene, 'update_polygon_callback'):
+                    scene.update_polygon_callback()
+                return new_pos
             if hasattr(self.scene(), 'update_polygon_callback'):
                 self.scene().update_polygon_callback()
         return super().itemChange(change, value)
@@ -90,6 +90,91 @@ class EditablePolygonItem(QGraphicsPolygonItem):
         super().__init__(*args, **kwargs)
         self.dragging = False
         self.drag_last = None
+
+
+class GuideLineItem(QGraphicsLineItem):
+    def __init__(self, orientation, x_or_y, rect, owner, index):
+        if orientation == 'v':
+            line = QLineF(0, rect.top(), 0, rect.bottom())
+            super().__init__(line)
+            self.setPos(x_or_y, 0)
+        else:
+            line = QLineF(rect.left(), 0, rect.right(), 0)
+            super().__init__(line)
+            self.setPos(0, x_or_y)
+        self.orientation = orientation
+        self.owner = owner
+        self.index = index
+        self.setFlag(QGraphicsItem.ItemIsMovable)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
+        self.setFlag(QGraphicsItem.ItemIsSelectable)
+        self.setFlag(QGraphicsItem.ItemIsFocusable, True)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(Qt.LeftButton | Qt.RightButton)
+        self.setCursor(Qt.SizeHorCursor if orientation == 'v' else Qt.SizeVerCursor)
+        self.dragging = False
+        self.drag_offset = 0.0
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self.drag_offset = 0.0
+            if self.orientation == 'v':
+                self.drag_offset = self.pos().x() - event.scenePos().x()
+            else:
+                self.drag_offset = self.pos().y() - event.scenePos().y()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.dragging and (event.buttons() & Qt.LeftButton):
+            if self.orientation == 'v':
+                new_x = event.scenePos().x() + self.drag_offset
+                self.setPos(new_x, 0)
+                if 0 <= self.index < len(self.owner.guides_v):
+                    self.owner.guides_v[self.index] = new_x
+            else:
+                new_y = event.scenePos().y() + self.drag_offset
+                self.setPos(0, new_y)
+                if 0 <= self.index < len(self.owner.guides_h):
+                    self.owner.guides_h[self.index] = new_y
+            self.owner.scene.guides_h = self.owner.guides_h
+            self.owner.scene.guides_v = self.owner.guides_v
+            self.owner.scene.guide_snap_threshold = self.owner.guide_snap_threshold
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+            event.accept()
+        super().mouseReleaseEvent(event)
+
+    def shape(self):
+        # Make picking area thicker for easier dragging
+        stroker = QPainterPathStroker()
+        stroker.setWidth(10.0)
+        return stroker.createStroke(super().shape())
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and self.owner:
+            pos = value
+            if self.orientation == 'v':
+                pos = QPointF(pos.x(), 0)
+                if 0 <= self.index < len(self.owner.guides_v):
+                    self.owner.guides_v[self.index] = pos.x()
+            else:
+                pos = QPointF(0, pos.y())
+                if 0 <= self.index < len(self.owner.guides_h):
+                    self.owner.guides_h[self.index] = pos.y()
+            # Propagate to scene for snapping
+            self.owner.scene.guides_h = self.owner.guides_h
+            self.owner.scene.guides_v = self.owner.guides_v
+            self.owner.scene.guide_snap_threshold = self.owner.guide_snap_threshold
+            return pos
+        return super().itemChange(change, value)
 
     def contextMenuEvent(self, event):
         add_action = None
@@ -205,6 +290,28 @@ class EditorWidget(QWidget):
         self.width_input.setSuffix(" m")
         self.width_input.setPrefix("Width: ")
         tools_layout.addWidget(self.width_input)
+
+        # Mask selector (shows all masks of current texture)
+        self.mask_combo = QComboBox()
+        self.mask_combo.setMinimumWidth(140)
+        self.mask_combo.currentIndexChanged.connect(self.on_mask_selected)
+        tools_layout.addWidget(self.mask_combo)
+
+        # Guide controls
+        self.add_h_guide_btn = QToolButton()
+        self.add_h_guide_btn.setText("+H guide")
+        self.add_h_guide_btn.clicked.connect(self.add_horizontal_guide)
+        tools_layout.addWidget(self.add_h_guide_btn)
+
+        self.add_v_guide_btn = QToolButton()
+        self.add_v_guide_btn.setText("+V guide")
+        self.add_v_guide_btn.clicked.connect(self.add_vertical_guide)
+        tools_layout.addWidget(self.add_v_guide_btn)
+
+        self.clear_guides_btn = QToolButton()
+        self.clear_guides_btn.setText("Clear guides")
+        self.clear_guides_btn.clicked.connect(self.clear_guides)
+        tools_layout.addWidget(self.clear_guides_btn)
         
         tools_layout.addStretch()
         layout.addWidget(tools_widget)
@@ -247,12 +354,28 @@ class EditorWidget(QWidget):
         for b in (self.apply_btn, self.clear_btn, self.undo_btn, self.redo_btn):
             b.setStyleSheet(btn_normal_style)
 
+        # Mask management
+        self.masks_data = []  # list of dicts with id, points, real_width, original_width, color
+        self.current_mask_color = QColor(0, 255, 0, 120)
+
+        # Overlay/guide storage
+        self.overlay_items = []
+        self.guides_h = []
+        self.guides_v = []
+        self.guide_items = []
+        self.guide_snap_threshold = 8.0
+        self.last_hover_pos = None
+        self.dragging_guide = None
+
         self.scene = QGraphicsScene()
         self.scene.update_polygon_callback = self.update_polygon 
         self.scene.delete_point_callback = self.delete_point
         self.scene.insert_point_callback = self.insert_point_at
         self.scene.push_state_callback = self.push_state
         self.scene.scale_mode_active = False
+        self.scene.guides_h = self.guides_h
+        self.scene.guides_v = self.guides_v
+        self.scene.guide_snap_threshold = self.guide_snap_threshold
         
         self.view = ZoomPanView(self.scene, self)
         layout.addWidget(self.view)
@@ -279,59 +402,314 @@ class EditorWidget(QWidget):
         # Track mouse move for Rect Mode preview
         self.view.mouseMoved.connect(self.on_view_mouse_moved)
         self.view.leftReleased.connect(self.on_view_left_released)
+        self.view.hoverMoved.connect(self.on_view_hovered)
+    def on_view_hovered(self, pos, zoom):
+        self.last_hover_pos = pos
 
-    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None):
-        self.current_image_path = filepath
-        self.editing_item = item_ref
-        self.clear_mask(reset_history=True)
-        self.current_mask_id = mask_id
-        
-        pixmap = QPixmap(filepath)
-        self.current_image_item = self.scene.addPixmap(pixmap)
-        self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
-        self.current_image_item.setZValue(-1)
-        self.view.fitInView(self.current_image_item, Qt.KeepAspectRatio)
+    def add_horizontal_guide(self):
+        if not self.current_image_item and not self.current_image_path:
+            return
+        y = self.last_hover_pos.y() if self.last_hover_pos else 0.0
+        self.guides_h.append(y)
+        self.render_guides()
 
-        self.px_per_meter = px_per_meter
-        
-        if existing_width:
-            self.width_input.setValue(existing_width)
-            
-        if existing_points:
-            for p in existing_points:
-                self.add_point(QPointF(p[0], p[1]))
+    def add_vertical_guide(self):
+        if not self.current_image_item and not self.current_image_path:
+            return
+        x = self.last_hover_pos.x() if self.last_hover_pos else 0.0
+        self.guides_v.append(x)
+        self.render_guides()
 
-        # If scale known and points exist, recompute width automatically
-        self.update_width_from_scale()
+    def clear_guides(self):
+        # Items might already be deleted if scene was cleared earlier
+        for item in list(self.guide_items):
+            try:
+                if item.scene():
+                    self.scene.removeItem(item)
+            except RuntimeError:
+                pass
+        self.guide_items = []
+        self.guides_h = []
+        self.guides_v = []
+        self.scene.guides_h = self.guides_h
+        self.scene.guides_v = self.guides_v
+        self.scene.guide_snap_threshold = self.guide_snap_threshold
 
-    def clear_mask(self, reset_history=False):
-        if not reset_history:
-            self.push_state()
+    def render_guides(self):
+        for item in self.guide_items:
+            self.scene.removeItem(item)
+        self.guide_items = []
+        if not self.current_image_item:
+            return
+        self.scene.guides_h = self.guides_h
+        self.scene.guides_v = self.guides_v
+        self.scene.guide_snap_threshold = self.guide_snap_threshold
+        rect = self.current_image_item.boundingRect()
+        pen = QPen(QColor(120, 180, 255, 180), 2, Qt.DashLine)
+        for idx, y in enumerate(self.guides_h):
+            line = GuideLineItem('h', y, rect, self, idx)
+            line.setPen(pen)
+            line.setZValue(2.0)
+            self.scene.addItem(line)
+            self.guide_items.append(line)
+        for idx, x in enumerate(self.guides_v):
+            line = GuideLineItem('v', x, rect, self, idx)
+            line.setPen(pen)
+            line.setZValue(2.0)
+            self.scene.addItem(line)
+            self.guide_items.append(line)
+
+    def try_start_drag_guide(self, pos):
+        if not self.current_image_item:
+            return False
+        thresh = self.guide_snap_threshold
+        # Check vertical guides
+        for idx, x in enumerate(self.guides_v):
+            if abs(pos.x() - x) <= thresh:
+                self.dragging_guide = ('v', idx)
+                return True
+        for idx, y in enumerate(self.guides_h):
+            if abs(pos.y() - y) <= thresh:
+                self.dragging_guide = ('h', idx)
+                return True
+        return False
+
+    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None, masks=None):
+        # Full reset for new texture
+        self.clear_guides()
         self.scene.clear()
+        # Restore callbacks lost after clear()
+        self.scene.update_polygon_callback = self.update_polygon 
+        self.scene.delete_point_callback = self.delete_point
+        self.scene.insert_point_callback = self.insert_point_at
+        self.scene.push_state_callback = self.push_state
+        self.scene.scale_mode_active = False
+
+        self.overlay_items = []
         self.points = []
+        self.scene.points_ref = self.points
         self.polygon_item = None
         self.is_closed = False
         self.rect_preview = None
         self.scale_mode_active = False
         self.scale_points = []
         self.scale_line = None
+        self.current_image_item = None
+        self.current_image_path = filepath
+        self.editing_item = item_ref
+        self.current_mask_id = mask_id
+        self.undo_stack = []
+        self.redo_stack = []
+        self.applying_state = False
+        self.px_per_meter = px_per_meter
+        self.last_hover_pos = None
+
+        pixmap = QPixmap(filepath)
+        self.current_image_item = self.scene.addPixmap(pixmap)
+        self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
+        self.current_image_item.setZValue(-1)
+        self.scene.setSceneRect(self.current_image_item.boundingRect())
+        self.view.fitInView(self.current_image_item, Qt.KeepAspectRatio)
+
+        # Load all masks for this texture
+        self.set_masks_data(masks or [], active_id=mask_id)
+
+        # Legacy direct points fallback (if active mask not found)
+        active_mask = self.get_mask_entry(self.current_mask_id)
+        if not active_mask and existing_points:
+            self.current_mask_id = None
+            self.current_mask_color = QColor(0, 255, 0, 120)
+            self._load_points_into_scene(existing_points, existing_width)
+
+        self.render_guides()
+
+    def _remove_edit_items(self):
+        if self.polygon_item:
+            self.scene.removeItem(self.polygon_item)
+            self.polygon_item = None
+        if self.rect_preview:
+            self.scene.removeItem(self.rect_preview)
+            self.rect_preview = None
+        if self.scale_line:
+            self.scene.removeItem(self.scale_line)
+            self.scale_line = None
+        for h in self.points:
+            self.scene.removeItem(h)
+        self.points = []
         self.scene.points_ref = self.points
-        self.current_mask_id = None
-        self.scene.update_polygon_callback = self.update_polygon
-        self.scene.delete_point_callback = self.delete_point
-        self.scene.insert_point_callback = self.insert_point_at
-        self.scene.push_state_callback = self.push_state
+
+    def clear_mask(self, reset_history=False):
+        if not reset_history:
+            self.push_state()
+        self._remove_edit_items()
+        self.is_closed = False
+        self.scale_mode_active = False
+        self.scale_points = []
         self.scene.scale_mode_active = False
         if reset_history:
             self.undo_stack = []
             self.redo_stack = []
-        if self.current_image_path:
-            pixmap = QPixmap(self.current_image_path)
-            self.current_image_item = self.scene.addPixmap(pixmap)
-            self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
-            self.current_image_item.setZValue(-1)
+        # Keep background/overlays/guides; refresh overlays for clarity
+        self.refresh_mask_overlays()
+
+    def set_masks_data(self, masks, active_id=None):
+        # Ensure colors and store
+        self.masks_data = []
+        for m in masks:
+            entry = dict(m) if isinstance(m, dict) else {}
+            if 'color' not in entry or not entry.get('color'):
+                entry['color'] = self._generated_color(entry.get('id'))
+            self.masks_data.append(entry)
+        self.masks_data.sort(key=lambda m: m.get('id', 0) or 0)
+        if active_id is None and self.masks_data:
+            active_id = self.masks_data[0].get('id')
+        self.current_mask_id = active_id
+        self.refresh_mask_combo()
+        self.refresh_mask_overlays()
+        if self.current_mask_id is not None:
+            mask = self.get_mask_entry(self.current_mask_id)
+            if mask:
+                self.current_mask_color = self._color_from_value(mask.get('color'))
+                self._load_points_into_scene(mask.get('points') or [], mask.get('real_width'))
+        else:
+            self.current_mask_color = QColor(0, 255, 0, 120)
+
+    def refresh_mask_combo(self):
+        self.mask_combo.blockSignals(True)
+        self.mask_combo.clear()
+        self.mask_combo.addItem("New mask", None)
+        for m in self.masks_data:
+            label = f"Mask {m.get('id', '?')}"
+            self.mask_combo.addItem(label, m.get('id'))
+        idx = self.mask_combo.findData(self.current_mask_id)
+        if idx != -1:
+            self.mask_combo.setCurrentIndex(idx)
+        else:
+            self.current_mask_id = None
+            self.mask_combo.setCurrentIndex(0)
+        self.mask_combo.blockSignals(False)
+
+    def refresh_mask_overlays(self):
+        for item in self.overlay_items:
+            self.scene.removeItem(item)
+        self.overlay_items = []
+        if not self.current_image_item:
+            return
+        for m in self.masks_data:
+            if m.get('id') == self.current_mask_id:
+                continue
+            pts = m.get('points') or []
+            if len(pts) < 3:
+                continue
+            poly = QPolygonF([QPointF(p[0], p[1]) for p in pts])
+            base_color = self._color_from_value(m.get('color'), alpha_override=80)
+            pen = QPen(base_color, 0)
+            ghost_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 30))
+            item = self.scene.addPolygon(poly, pen, ghost_brush)
+            item.setZValue(0.3)
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            self.overlay_items.append(item)
+
+    def on_mask_selected(self, index):
+        mask_id = self.mask_combo.currentData()
+        if mask_id == self.current_mask_id:
+            return
+        # New mask request
+        if mask_id is None:
+            next_id = max([m.get('id', 0) for m in self.masks_data] + [0]) + 1
+            new_color = self._generated_color(next_id)
+            self.masks_data.append({
+                'id': next_id,
+                'points': [],
+                'real_width': None,
+                'original_width': None,
+                'color': new_color
+            })
+            self.current_mask_id = next_id
+            self.current_mask_color = self._color_from_value(new_color)
+            # New mask means we start fresh, no bound atlas item
+            self.editing_item = None
+            self.refresh_mask_combo()
+            self._remove_edit_items()
+            self.is_closed = False
+            self.scale_mode_active = False
+            self.scene.scale_mode_active = False
+            self.scale_points = []
+            self.scale_line = None
+            self.width_input.setValue(self.width_input.minimum())
+            self.refresh_mask_overlays()
+            return
+
+        # Switching to an existing mask: drop atlas linkage if it doesn't match
+        if self.editing_item and getattr(self.editing_item, 'mask_id', None) != mask_id:
+            self.editing_item = None
+
+        self.current_mask_id = mask_id
+        self._remove_edit_items()
+        self.is_closed = False
+        self.rect_preview = None
+        self.scale_mode_active = False
+        self.scene.scale_mode_active = False
+        self.scale_points = []
+        self.scale_line = None
+        mask = self.get_mask_entry(mask_id)
+        if not mask:
+            return
+        self.current_mask_color = self._color_from_value(mask.get('color'))
+        width_val = mask.get('real_width')
+        if width_val:
+            self.width_input.setValue(width_val)
+        self._load_points_into_scene(mask.get('points') or [], width_val)
+        self.refresh_mask_overlays()
+
+    def refresh_masks_view(self, filepath, masks, active_id=None):
+        if filepath != self.current_image_path:
+            return
+        self.set_masks_data(masks, active_id or self.current_mask_id)
+
+    def _load_points_into_scene(self, points, width_value=None):
+        self._remove_edit_items()
+        self.applying_state = True
+        for p in points:
+            handle = HandleItem(p[0], p[1], 4.0)
+            self.scene.addItem(handle)
+            self.points.append(handle)
+        self.scene.points_ref = self.points
+        if width_value:
+            self.width_input.setValue(width_value)
+        self.is_closed = len(self.points) >= 3
+        self.update_polygon()
+        self.applying_state = False
+        self.update_width_from_scale()
+
+    def get_mask_entry(self, mask_id):
+        for m in self.masks_data:
+            if m.get('id') == mask_id:
+                return m
+        return None
+
+    def _generated_color(self, seed):
+        # Deterministic bright-ish color from seed
+        hue = ((seed or 1) * 73) % 360
+        c = QColor()
+        c.setHsv(hue, 200, 255, 160)
+        return c.name()
+
+    def _color_from_value(self, value, alpha_override=None):
+        if value:
+            color = QColor(value)
+        else:
+            color = QColor(0, 255, 0)
+        if alpha_override is not None:
+            color.setAlpha(int(alpha_override))
+        elif color.alpha() == 255:
+            color.setAlpha(120)
+        return color
 
     def on_view_clicked(self, pos):
+        # Drag guide if near
+        if self.try_start_drag_guide(pos):
+            return
         # If we are setting scale, handle separately
         if self.scale_mode_active:
             self.handle_scale_click(pos)
@@ -385,6 +763,20 @@ class EditorWidget(QWidget):
             self.scale_line.setZValue(0.6)
 
     def on_view_mouse_moved(self, pos):
+        # Dragging guide
+        if self.dragging_guide:
+            kind, idx = self.dragging_guide
+            rect = self.current_image_item.boundingRect() if self.current_image_item else QRectF(0, 0, 0, 0)
+            if kind == 'h' and 0 <= idx < len(self.guides_h):
+                y = max(rect.top(), min(rect.bottom(), pos.y()))
+                self.guides_h[idx] = y
+            elif kind == 'v' and 0 <= idx < len(self.guides_v):
+                x = max(rect.left(), min(rect.right(), pos.x()))
+                self.guides_v[idx] = x
+            self.scene.guides_h = self.guides_h
+            self.scene.guides_v = self.guides_v
+            self.render_guides()
+            return
         # Live preview only in Rect Mode after first point
         if self.scale_mode_active:
             return
@@ -424,6 +816,9 @@ class EditorWidget(QWidget):
         self.rect_preview.setZValue(0.4)
 
     def on_view_left_released(self, pos):
+        if self.dragging_guide:
+            self.dragging_guide = None
+            return
         # Clear preview if user cancels rect creation (e.g., deselects mode)
         if self.rect_preview and (not self.rect_tool.isChecked() or self.is_closed or len(self.points) != 1):
             self.scene.removeItem(self.rect_preview)
@@ -501,31 +896,15 @@ class EditorWidget(QWidget):
 
     def apply_state(self, state):
         self.applying_state = True
-        self.scene.clear()
-        self.points = []
-        self.polygon_item = None
+        self._remove_edit_items()
         self.is_closed = False
         self.rect_preview = None
         self.scale_mode_active = False
         self.scale_points = []
-        self.scale_line = None
-        self.scene.points_ref = self.points
-        self.scene.update_polygon_callback = self.update_polygon
-        self.scene.delete_point_callback = self.delete_point
-        self.scene.insert_point_callback = self.insert_point_at
-        self.scene.push_state_callback = self.push_state
         self.scene.scale_mode_active = False
-        if self.current_image_path:
-            pixmap = QPixmap(self.current_image_path)
-            self.current_image_item = self.scene.addPixmap(pixmap)
-            self.current_image_item.setAcceptedMouseButtons(Qt.NoButton)
-            self.current_image_item.setZValue(-1)
-        else:
-            self.current_image_item = None
 
         for x, y in state.get('points', []):
-            radius = 4.0
-            handle = HandleItem(x, y, radius)
+            handle = HandleItem(x, y, 4.0)
             self.scene.addItem(handle)
             self.points.append(handle)
         self.scene.points_ref = self.points
@@ -620,6 +999,9 @@ class EditorWidget(QWidget):
 
     def update_polygon(self):
         if not self.points:
+            if self.polygon_item:
+                self.scene.removeItem(self.polygon_item)
+                self.polygon_item = None
             return
             
         poly_points = [h.pos() for h in self.points]
@@ -628,12 +1010,20 @@ class EditorWidget(QWidget):
             self.polygon_item.setPolygon(QPolygonF(poly_points))
         else:
             poly_item = EditablePolygonItem(QPolygonF(poly_points))
-            poly_item.setPen(QPen(Qt.green, 0))
-            poly_item.setBrush(QBrush(QColor(0, 255, 0, 50)))
             poly_item.setZValue(0.5)
             self.scene.addItem(poly_item)
             self.polygon_item = poly_item
-        
+
+        # Refresh colors on every update in case active mask changed
+        base_color = QColor(self.current_mask_color)
+        outline_color = QColor(base_color)
+        outline_color.setAlpha(220)
+        fill_color = QColor(base_color)
+        if fill_color.alpha() < 40:
+            fill_color.setAlpha(60)
+        self.polygon_item.setPen(QPen(outline_color, 0))
+        self.polygon_item.setBrush(QBrush(fill_color))
+
         for h in self.points:
             h.setZValue(1)
         

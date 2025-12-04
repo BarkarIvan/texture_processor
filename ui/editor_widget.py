@@ -146,7 +146,6 @@ class GuideLineItem(QGraphicsLineItem):
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
         self.setFlag(QGraphicsItem.ItemIsFocusable, True)
-        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
         self.setAcceptedMouseButtons(Qt.LeftButton | Qt.RightButton)
         self.setCursor(Qt.SizeHorCursor if orientation == 'v' else Qt.SizeVerCursor)
         self.dragging = False
@@ -192,7 +191,7 @@ class GuideLineItem(QGraphicsLineItem):
     def shape(self):
         # Make picking area thicker for easier dragging
         stroker = QPainterPathStroker()
-        stroker.setWidth(10.0)
+        stroker.setWidth(12.0)
         return stroker.createStroke(super().shape())
 
     def itemChange(self, change, value):
@@ -445,7 +444,8 @@ class EditorWidget(QWidget):
         self.scene.guides_v = self.guides_v
         self.scene.guide_snap_threshold = self.guide_snap_threshold
         rect = self.current_image_item.boundingRect()
-        pen = QPen(QColor(120, 180, 255, 180), 2, Qt.DashLine)
+        pen = QPen(QColor(120, 180, 255, 180), 0, Qt.DashLine)
+        pen.setCosmetic(True)
         for idx, y in enumerate(self.guides_h):
             line = GuideLineItem('h', y, rect, self, idx)
             line.setPen(pen)

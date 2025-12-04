@@ -91,6 +91,43 @@ class EditablePolygonItem(QGraphicsPolygonItem):
         self.dragging = False
         self.drag_last = None
 
+    def mousePressEvent(self, event):
+        if getattr(self.scene(), 'scale_mode_active', False):
+            event.ignore()
+            return
+        # Drag polygon only when Ctrl held; otherwise let click pass through for adding points
+        if not (event.modifiers() & Qt.ControlModifier):
+            self.dragging = False
+            event.ignore()
+            return
+        if hasattr(self.scene(), 'push_state_callback'):
+            self.scene().push_state_callback()
+        self.dragging = True
+        self.drag_last = event.scenePos()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.dragging and self.drag_last is not None:
+            delta = event.scenePos() - self.drag_last
+            points_list = getattr(self.scene(), 'points_ref', [])
+            for h in points_list:
+                h.setPos(h.pos() + delta)
+            self.drag_last = event.scenePos()
+            # Update polygon in place
+            if hasattr(self.scene(), 'points_ref'):
+                poly_points = [h.pos() for h in points_list]
+                self.setPolygon(QPolygonF(poly_points))
+            if hasattr(self.scene(), 'update_polygon_callback'):
+                self.scene().update_polygon_callback()
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.dragging = False
+        self.drag_last = None
+        event.accept()
+
 
 class GuideLineItem(QGraphicsLineItem):
     def __init__(self, orientation, x_or_y, rect, owner, index):
@@ -186,43 +223,6 @@ class GuideLineItem(QGraphicsLineItem):
                 self.scene().insert_point_callback(event.scenePos())
         else:
             super().contextMenuEvent(event)
-
-    def mousePressEvent(self, event):
-        if getattr(self.scene(), 'scale_mode_active', False):
-            event.ignore()
-            return
-        # Drag polygon only when Ctrl held; otherwise let click pass through for adding points
-        if not (event.modifiers() & Qt.ControlModifier):
-            self.dragging = False
-            event.ignore()
-            return
-        if hasattr(self.scene(), 'push_state_callback'):
-            self.scene().push_state_callback()
-        self.dragging = True
-        self.drag_last = event.scenePos()
-        event.accept()
-
-    def mouseMoveEvent(self, event):
-        if self.dragging and self.drag_last is not None:
-            delta = event.scenePos() - self.drag_last
-            points_list = getattr(self.scene(), 'points_ref', [])
-            for h in points_list:
-                h.setPos(h.pos() + delta)
-            self.drag_last = event.scenePos()
-            # Update polygon in place
-            if hasattr(self.scene(), 'points_ref'):
-                poly_points = [h.pos() for h in points_list]
-                self.setPolygon(QPolygonF(poly_points))
-            if hasattr(self.scene(), 'update_polygon_callback'):
-                self.scene().update_polygon_callback()
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self.dragging = False
-        self.drag_last = None
-        event.accept()
 
 class EditorWidget(QWidget):
     mask_applied = Signal(str, list, float, int, object, object) # filepath, points, real_width, original_width, item_ref, mask_id
@@ -474,6 +474,32 @@ class EditorWidget(QWidget):
                 return True
         return False
 
+    def _snap_guide_to_points(self, kind, cursor_pos):
+        """Find nearest point to cursor within snap threshold and return axis value."""
+        threshold = self.guide_snap_threshold
+        if threshold is None:
+            return None
+        best_val = None
+        best_dist = threshold + 1.0
+
+        def consider_point(px, py, current_best_dist, current_best_val):
+            dist = math.hypot(px - cursor_pos.x(), py - cursor_pos.y())
+            if dist <= threshold and dist < current_best_dist:
+                return dist, (px if kind == 'v' else py)
+            return current_best_dist, current_best_val
+
+        # Active mask points
+        for handle in self.points:
+            pt = handle.pos()
+            best_dist, best_val = consider_point(pt.x(), pt.y(), best_dist, best_val)
+
+        # Other masks (including current mask if saved)
+        for m in self.masks_data:
+            for px, py in m.get('points') or []:
+                best_dist, best_val = consider_point(px, py, best_dist, best_val)
+
+        return best_val
+
     def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None, masks=None):
         # Full reset for new texture
         self.clear_guides()
@@ -599,16 +625,28 @@ class EditorWidget(QWidget):
             if m.get('id') == self.current_mask_id:
                 continue
             pts = m.get('points') or []
-            if len(pts) < 3:
-                continue
-            poly = QPolygonF([QPointF(p[0], p[1]) for p in pts])
-            base_color = self._color_from_value(m.get('color'), alpha_override=80)
-            pen = QPen(base_color, 0)
-            ghost_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 30))
-            item = self.scene.addPolygon(poly, pen, ghost_brush)
-            item.setZValue(0.3)
-            item.setAcceptedMouseButtons(Qt.NoButton)
-            self.overlay_items.append(item)
+            if len(pts) >= 3:
+                poly = QPolygonF([QPointF(p[0], p[1]) for p in pts])
+                outline_color = self._color_from_value(m.get('color'), alpha_override=150)
+                fill_color = QColor(outline_color)
+                fill_color.setAlpha(70)
+                pen = QPen(outline_color, 0)
+                ghost_brush = QBrush(fill_color)
+                item = self.scene.addPolygon(poly, pen, ghost_brush)
+                item.setZValue(0.3)
+                item.setAcceptedMouseButtons(Qt.NoButton)
+                self.overlay_items.append(item)
+
+            # Show ghost vertices for clarity
+            if pts:
+                point_color = self._color_from_value(m.get('color'), alpha_override=220)
+                for px, py in pts:
+                    marker = self.scene.addEllipse(-3.0, -3.0, 6.0, 6.0, QPen(point_color, 0), QBrush(point_color))
+                    marker.setPos(px, py)
+                    marker.setZValue(0.35)
+                    marker.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+                    marker.setAcceptedMouseButtons(Qt.NoButton)
+                    self.overlay_items.append(marker)
 
     def on_mask_selected(self, index):
         mask_id = self.mask_combo.currentData()
@@ -769,9 +807,15 @@ class EditorWidget(QWidget):
             rect = self.current_image_item.boundingRect() if self.current_image_item else QRectF(0, 0, 0, 0)
             if kind == 'h' and 0 <= idx < len(self.guides_h):
                 y = max(rect.top(), min(rect.bottom(), pos.y()))
+                snap_y = self._snap_guide_to_points('h', pos)
+                if snap_y is not None:
+                    y = max(rect.top(), min(rect.bottom(), snap_y))
                 self.guides_h[idx] = y
             elif kind == 'v' and 0 <= idx < len(self.guides_v):
                 x = max(rect.left(), min(rect.right(), pos.x()))
+                snap_x = self._snap_guide_to_points('v', pos)
+                if snap_x is not None:
+                    x = max(rect.left(), min(rect.right(), snap_x))
                 self.guides_v[idx] = x
             self.scene.guides_h = self.guides_h
             self.scene.guides_v = self.guides_v

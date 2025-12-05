@@ -1,5 +1,5 @@
 import math
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup, QSizePolicy, QComboBox, QGraphicsLineItem
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QVBoxLayout, QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsItem, QPushButton, QDoubleSpinBox, QLabel, QHBoxLayout, QCheckBox, QMenu, QToolButton, QButtonGroup, QSizePolicy, QComboBox, QGraphicsLineItem, QFrame
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QPainterPathStroker, QGuiApplication
 from PySide6.QtCore import Qt, QPointF, Signal, QRectF, QLineF
 from .view_utils import ZoomPanView
@@ -226,32 +226,37 @@ class GuideLineItem(QGraphicsLineItem):
 class EditorWidget(QWidget):
     mask_applied = Signal(str, list, float, int, object, object) # filepath, points, real_width, original_width, item_ref, mask_id
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, embed_controls=True):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(320)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # Toolbar
-        tools_widget = QWidget()
-        tools_layout = QHBoxLayout(tools_widget)
-        tools_layout.setContentsMargins(0, 0, 0, 0)
-        
+        # Toolbar-style control strip (single row, can be hosted outside)
+        controls_panel = QFrame()
+        controls_panel.setObjectName("controlsPanel")
+        controls_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        controls_layout = QHBoxLayout(controls_panel)
+        controls_layout.setContentsMargins(10, 6, 10, 6)
+        controls_layout.setSpacing(8)
+
         self.apply_btn = QPushButton("Apply Mask")
         self.apply_btn.clicked.connect(self.apply_mask)
-        tools_layout.addWidget(self.apply_btn)
+        controls_layout.addWidget(self.apply_btn)
         
         self.clear_btn = QPushButton("Clear Mask")
         self.clear_btn.clicked.connect(self.clear_mask)
-        tools_layout.addWidget(self.clear_btn)
+        controls_layout.addWidget(self.clear_btn)
 
         self.undo_btn = QPushButton("Undo")
         self.undo_btn.clicked.connect(self.undo)
-        tools_layout.addWidget(self.undo_btn)
+        controls_layout.addWidget(self.undo_btn)
 
         self.redo_btn = QPushButton("Redo")
         self.redo_btn.clicked.connect(self.redo)
-        tools_layout.addWidget(self.redo_btn)
+        controls_layout.addWidget(self.redo_btn)
+
+        controls_layout.addSpacing(12)
 
         # Tool buttons
         self.tool_group = QButtonGroup(self)
@@ -261,59 +266,73 @@ class EditorWidget(QWidget):
         self.poly_tool.setText("Polygon")
         self.poly_tool.setCheckable(True)
         self.poly_tool.setChecked(True)
-        tools_layout.addWidget(self.poly_tool)
+        controls_layout.addWidget(self.poly_tool)
         self.tool_group.addButton(self.poly_tool)
 
         self.rect_tool = QToolButton()
         self.rect_tool.setText("Rect")
         self.rect_tool.setCheckable(True)
-        tools_layout.addWidget(self.rect_tool)
+        controls_layout.addWidget(self.rect_tool)
         self.tool_group.addButton(self.rect_tool)
 
         self.scale_btn = QToolButton()
         self.scale_btn.setText("Set Scale")
         self.scale_btn.setCheckable(True)
         self.scale_btn.clicked.connect(self.start_scale_mode)
-        tools_layout.addWidget(self.scale_btn)
+        controls_layout.addWidget(self.scale_btn)
+
+        controls_layout.addSpacing(12)
+
+        # Mask selector (shows all masks of current texture)
+        mask_label = QLabel("Mask")
+        controls_layout.addWidget(mask_label)
+        self.mask_combo = QComboBox()
+        self.mask_combo.setMinimumWidth(140)
+        self.mask_combo.setMaximumWidth(240)
+        self.mask_combo.currentIndexChanged.connect(self.on_mask_selected)
+        controls_layout.addWidget(self.mask_combo)
+
+        controls_layout.addSpacing(12)
 
         self.scale_length_input = QDoubleSpinBox()
         self.scale_length_input.setRange(0.01, 10000.0)
         self.scale_length_input.setValue(1.0)
         self.scale_length_input.setPrefix("Len: ")
         self.scale_length_input.setSuffix(" m")
-        tools_layout.addWidget(self.scale_length_input)
+        self.scale_length_input.setMaximumWidth(140)
+        controls_layout.addWidget(self.scale_length_input)
         
         self.width_input = QDoubleSpinBox()
         self.width_input.setRange(0.1, 1000.0)
         self.width_input.setValue(1.0)
         self.width_input.setSuffix(" m")
         self.width_input.setPrefix("Width: ")
-        tools_layout.addWidget(self.width_input)
+        self.width_input.setMaximumWidth(140)
+        controls_layout.addWidget(self.width_input)
 
-        # Mask selector (shows all masks of current texture)
-        self.mask_combo = QComboBox()
-        self.mask_combo.setMinimumWidth(140)
-        self.mask_combo.currentIndexChanged.connect(self.on_mask_selected)
-        tools_layout.addWidget(self.mask_combo)
+        controls_layout.addSpacing(12)
 
         # Guide controls
         self.add_h_guide_btn = QToolButton()
         self.add_h_guide_btn.setText("+H guide")
         self.add_h_guide_btn.clicked.connect(self.add_horizontal_guide)
-        tools_layout.addWidget(self.add_h_guide_btn)
+        controls_layout.addWidget(self.add_h_guide_btn)
 
         self.add_v_guide_btn = QToolButton()
         self.add_v_guide_btn.setText("+V guide")
         self.add_v_guide_btn.clicked.connect(self.add_vertical_guide)
-        tools_layout.addWidget(self.add_v_guide_btn)
+        controls_layout.addWidget(self.add_v_guide_btn)
 
         self.clear_guides_btn = QToolButton()
         self.clear_guides_btn.setText("Clear guides")
         self.clear_guides_btn.clicked.connect(self.clear_guides)
-        tools_layout.addWidget(self.clear_guides_btn)
-        
-        tools_layout.addStretch()
-        layout.addWidget(tools_widget)
+        controls_layout.addWidget(self.clear_guides_btn)
+
+        controls_layout.addStretch()
+        self.controls_panel = controls_panel
+
+        if embed_controls:
+            layout.addWidget(self.controls_panel)
 
         # Tool button styles for selected state
         btn_style = """

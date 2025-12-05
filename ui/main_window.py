@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
         
         # Widgets
         self.browser = BrowserWidget()
-        self.editor = EditorWidget()
+        self.editor = EditorWidget(embed_controls=False)
         self.canvas = CanvasWidget()
         # Wire Fit/Center actions now
         self.fit_action.triggered.connect(self.canvas.fit_to_atlas)
@@ -138,6 +138,8 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 3)
 
+        # Place editor control strip across the window under the main toolbar
+        main_layout.addWidget(self.editor.controls_panel)
         main_layout.addWidget(splitter)
 
         # Connections
@@ -185,6 +187,14 @@ class MainWindow(QMainWindow):
             color: #e7e9ef;
             font-family: 'Inter', 'Segoe UI', sans-serif;
             font-size: 9pt;
+        }
+        QFrame#controlsPanel {
+            background: #131722;
+            border-bottom: 1px solid #1e2230;
+        }
+        QFrame#controlsPanel QLabel {
+            color: #cfd3df;
+            font-weight: 600;
         }
         QToolBar {
             background: #161922;

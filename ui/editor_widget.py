@@ -91,6 +91,16 @@ class EditablePolygonItem(QGraphicsPolygonItem):
         self.dragging = False
         self.drag_last = None
 
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+        add_action = menu.addAction("Add Point Here")
+        action = menu.exec(event.screenPos())
+        if action == add_action and hasattr(self.scene(), 'insert_point_callback'):
+            self.scene().insert_point_callback(event.scenePos())
+            event.accept()
+        else:
+            super().contextMenuEvent(event)
+
     def mousePressEvent(self, event):
         if getattr(self.scene(), 'scale_mode_active', False):
             event.ignore()

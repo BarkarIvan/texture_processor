@@ -394,6 +394,7 @@ class EditorWidget(QWidget):
         self.guide_snap_threshold = 8.0
         self.last_hover_pos = None
         self.dragging_guide = None
+        self.max_guides = 20
 
         self.scene = QGraphicsScene()
         self.scene.update_polygon_callback = self.update_polygon 
@@ -437,12 +438,18 @@ class EditorWidget(QWidget):
     def add_horizontal_guide(self):
         if not self.current_image_item and not self.current_image_path:
             return
+        if len(self.guides_h) + len(self.guides_v) >= self.max_guides:
+            print(f"Guide limit reached ({self.max_guides}).")
+            return
         y = self.last_hover_pos.y() if self.last_hover_pos else 0.0
         self.guides_h.append(y)
         self.render_guides()
 
     def add_vertical_guide(self):
         if not self.current_image_item and not self.current_image_path:
+            return
+        if len(self.guides_h) + len(self.guides_v) >= self.max_guides:
+            print(f"Guide limit reached ({self.max_guides}).")
             return
         x = self.last_hover_pos.x() if self.last_hover_pos else 0.0
         self.guides_v.append(x)
@@ -529,7 +536,7 @@ class EditorWidget(QWidget):
 
         return best_val
 
-    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None, masks=None):
+    def load_image(self, filepath, existing_points=None, existing_width=None, item_ref=None, px_per_meter=None, mask_id=None, masks=None, guides=None):
         # Full reset for new texture
         self.clear_guides()
         self.scene.clear()
@@ -575,6 +582,19 @@ class EditorWidget(QWidget):
             self.current_mask_id = None
             self.current_mask_color = QColor(0, 255, 0, 120)
             self._load_points_into_scene(existing_points, existing_width)
+
+        # Apply saved guides if provided
+        if guides:
+            gh = list(guides.get('guides_h', []))
+            gv = list(guides.get('guides_v', []))
+            total_cap = max(0, self.max_guides)
+            gh = gh[:total_cap]
+            gv = gv[:max(0, total_cap - len(gh))]
+            self.guides_h = gh
+            self.guides_v = gv
+            self.scene.guides_h = self.guides_h
+            self.scene.guides_v = self.guides_v
+            self.scene.guide_snap_threshold = self.guide_snap_threshold
 
         self.render_guides()
 

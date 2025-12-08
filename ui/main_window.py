@@ -179,6 +179,15 @@ class MainWindow(QMainWindow):
                 continue
             m['color'] = self.generate_mask_color(m.get('id'))
 
+    def capture_current_guides(self):
+        """Persist guides from the currently open texture back into project_data."""
+        path = getattr(self.editor, 'current_image_path', None)
+        if not path:
+            return
+        tex_entry = self.project_data['textures'].setdefault(path, {'px_per_meter': None, 'masks': [], 'guides_h': [], 'guides_v': []})
+        tex_entry['guides_h'] = list(getattr(self.editor, 'guides_h', []))
+        tex_entry['guides_v'] = list(getattr(self.editor, 'guides_v', []))
+
     def apply_dark_theme(self):
         # Simple dark palette
         self.setStyleSheet("""
@@ -284,17 +293,20 @@ class MainWindow(QMainWindow):
 
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
-        data = self.project_data['textures'].setdefault(filepath, {'px_per_meter': None, 'masks': []})
+        self.capture_current_guides()
+        data = self.project_data['textures'].setdefault(filepath, {'px_per_meter': None, 'masks': [], 'guides_h': [], 'guides_v': []})
         px_per_meter = data.get('px_per_meter')
         # For new mask creation, start blank but keep scale info if available
         self.ensure_mask_colors(data.get('masks', []))
         masks = data.get('masks', [])
         active_id = masks[0].get('id') if masks else None
-        self.editor.load_image(filepath, None, None, px_per_meter=px_per_meter, mask_id=active_id, masks=masks) # Clears editing_item
+        guides = {'guides_h': data.get('guides_h', []), 'guides_v': data.get('guides_v', [])}
+        self.editor.load_image(filepath, None, None, px_per_meter=px_per_meter, mask_id=active_id, masks=masks, guides=guides) # Clears editing_item
         
     def on_item_edit_requested(self, item):
         # Load item into editor
-        data = self.project_data['textures'].setdefault(item.filepath, {'px_per_meter': None, 'masks': []})
+        self.capture_current_guides()
+        data = self.project_data['textures'].setdefault(item.filepath, {'px_per_meter': None, 'masks': [], 'guides_h': [], 'guides_v': []})
         self.ensure_mask_colors(data.get('masks', []))
         px_per_meter = data.get('px_per_meter')
         mask_entry = None
@@ -305,13 +317,16 @@ class MainWindow(QMainWindow):
         points = mask_entry.get('points') if mask_entry else item.points
         real_width = mask_entry.get('real_width') if mask_entry else item.real_width
         original_width = mask_entry.get('original_width') if mask_entry else item.original_width
-        self.editor.load_image(item.filepath, points, real_width, item, px_per_meter, getattr(item, 'mask_id', None), masks=data.get('masks', []))
+        guides = {'guides_h': data.get('guides_h', []), 'guides_v': data.get('guides_v', [])}
+        self.editor.load_image(item.filepath, points, real_width, item, px_per_meter, getattr(item, 'mask_id', None), masks=data.get('masks', []), guides=guides)
         
     def on_mask_applied(self, filepath, points, real_width, original_width, item_ref, mask_id):
         # Ensure texture entry
         tex_entry = self.project_data['textures'].setdefault(filepath, {
             'px_per_meter': self.editor.px_per_meter,
-            'masks': []
+            'masks': [],
+            'guides_h': [],
+            'guides_v': []
         })
         self.ensure_mask_colors(tex_entry.get('masks', []))
         if self.editor.px_per_meter:
@@ -381,7 +396,7 @@ class MainWindow(QMainWindow):
             return
         offset = QPointF(20, 20)
         for it in selected:
-            tex_entry = self.project_data['textures'].setdefault(it.filepath, {'px_per_meter': None, 'masks': []})
+            tex_entry = self.project_data['textures'].setdefault(it.filepath, {'px_per_meter': None, 'masks': [], 'guides_h': [], 'guides_v': []})
             self.ensure_mask_colors(tex_entry.get('masks', []))
             if tex_entry.get('px_per_meter') is None and self.editor.px_per_meter:
                 tex_entry['px_per_meter'] = self.editor.px_per_meter
@@ -415,6 +430,7 @@ class MainWindow(QMainWindow):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
         if filepath:
             import json
+            self.capture_current_guides()
             self.project_data['base_path'] = self.browser.current_folder
             self.project_data['atlas_density'] = self.density_input.value()
             self.project_data['show_grid'] = self.grid_chk.isChecked()
@@ -457,6 +473,8 @@ class MainWindow(QMainWindow):
                         }]
                     }
                 self.ensure_mask_colors(textures[tex_path].get('masks', []))
+                textures[tex_path].setdefault('guides_h', [])
+                textures[tex_path].setdefault('guides_v', [])
             
             base_path = self.project_data.get('base_path')
             if base_path:

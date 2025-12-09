@@ -561,7 +561,21 @@ class MainWindow(QMainWindow):
     def export_atlas(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export Atlas", "", "PNG Files (*.png)")
         if filepath:
-            self.canvas.export_atlas(filepath)
+            if not filepath.lower().endswith(".png"):
+                filepath += ".png"
+            dlg = QProgressDialog("Exporting PNG...", None, 0, 0, self)
+            dlg.setWindowModality(Qt.ApplicationModal)
+            dlg.setCancelButton(None)
+            dlg.setMinimumDuration(0)
+            dlg.show()
+            QApplication.processEvents()
+            try:
+                self.canvas.export_atlas(filepath)
+                self.statusBar().showMessage(f"PNG exported: {filepath}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Failed", str(e))
+            finally:
+                dlg.close()
 
     def export_obj_meshes(self):
         filepath, _ = QFileDialog.getSaveFileName(self, "Export Meshes", "", "OBJ Files (*.obj)")
@@ -570,16 +584,24 @@ class MainWindow(QMainWindow):
         if not filepath.lower().endswith(".obj"):
             filepath += ".obj"
 
-        obj_text, err = self.canvas.generate_obj()
-        if err:
-            QMessageBox.warning(self, "Export Failed", err)
-            return
-
+        dlg = QProgressDialog("Exporting OBJ...", None, 0, 0, self)
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        QApplication.processEvents()
         try:
+            obj_text, err = self.canvas.generate_obj()
+            if err:
+                QMessageBox.warning(self, "Export Failed", err)
+                return
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(obj_text)
+            self.statusBar().showMessage(f"OBJ exported: {filepath}", 3000)
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", str(e))
+        finally:
+            dlg.close()
 
     def open_resample_settings(self):
         dialog = QDialog(self)

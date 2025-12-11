@@ -409,7 +409,8 @@ class CanvasWidget(QWidget):
         
         # Store metadata
         item.filepath = image_path
-        item.original_filepath = original_path or getattr(item, "original_filepath", image_path)
+        # Always keep a non-null source path for persistence/duplication
+        item.original_filepath = original_path or item.filepath
         item.points = points
         item.real_width = real_width
         item.original_width = original_width
@@ -449,7 +450,7 @@ class CanvasWidget(QWidget):
         item.original_width = original_width
         if mask_id is not None:
             item.mask_id = mask_id
-        if not hasattr(item, "original_filepath"):
+        if not getattr(item, "original_filepath", None):
             item.original_filepath = item.filepath
         if self.scene.snap_items_to_pixel:
             pos = item.pos()

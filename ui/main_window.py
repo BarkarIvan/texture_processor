@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QToolBar, QFileDialog, QDoubleSpinBox, QCheckBox, QComboBox, QSizePolicy, QListWidget, QListWidgetItem, QPushButton, QLineEdit, QMessageBox
 from PySide6.QtGui import QAction, QActionGroup, QColor
@@ -430,6 +431,8 @@ class MainWindow(QMainWindow):
         filepath, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "JSON Files (*.json)")
         if filepath:
             import json
+            # Rotate backups before overwriting the main file
+            self._rotate_backups(filepath, max_backups=4)
             self.capture_current_guides()
             self.project_data['base_path'] = self.browser.current_folder
             self.project_data['atlas_density'] = self.density_input.value()
@@ -450,6 +453,34 @@ class MainWindow(QMainWindow):
             self.project_data['items'] = items_data
             with open(filepath, 'w') as f:
                 json.dump(self.project_data, f, indent=4)
+
+    def _rotate_backups(self, filepath, max_backups=4):
+        """Create up to N rotating backup files alongside the main project file."""
+        if not filepath:
+            return
+        base, ext = os.path.splitext(filepath)
+        try:
+            max_idx = max(1, int(max_backups))
+        except Exception:
+            max_idx = 4
+
+        # Shift older backups up (back_1 -> back_2, etc.)
+        for i in range(max_idx, 1, -1):
+            src = f"{base}_back_{i-1}{ext}"
+            dst = f"{base}_back_{i}{ext}"
+            if os.path.exists(src):
+                try:
+                    os.replace(src, dst)
+                except Exception:
+                    pass
+
+        # Save current main file as the newest backup
+        if os.path.exists(filepath):
+            dst = f"{base}_back_1{ext}"
+            try:
+                shutil.copy2(filepath, dst)
+            except Exception:
+                pass
 
     def load_project(self, filepath=None):
         if not filepath:

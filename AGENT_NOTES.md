@@ -31,12 +31,13 @@ pip install -r requirements.txt
   - `export_atlas` сохраняет PNG без сетки/фона/selection, опционально `apply_mip_flood` (заливка цветных каналов вне маски из mips, альфа неизменна; уровни 1–16 или auto до 1×1).
   - `generate_obj` собирает OBJ: один объект на маску, вершины в метрах (px/atlas_density) с +Y вверх, UV нормализованы к атласу с origin снизу-слева, сортировка по mask_id/пути/позиции для детерминизма.
 - ui/main_window.py: соединяет все виджеты, хранит `project_data`, тулбар с плотностью/размером/сеткой, ресемплингом, Duplicate/Delete, Export PNG/OBJ, Path Aliases, Mip Flood, Fit/Center.
-  - Выбор изображения → editor (с сохранением px_per_meter).
+  - Выбор изображения -> editor (с сохранением px_per_meter).
   - Apply/Update маски: создаёт/обновляет mask_id на текстуре, кладёт фрагмент на атлас.
   - Duplicate создаёт новый mask_id и элемент со смещением; Delete убирает элемент и маску.
-  - Сохранение проекта в JSON: base_path, atlas_density/size/show_grid/resample/mip_flood/settings, textures{} с masks[], items[] с позициями. При загрузке нормализует legacy поля, пересэмпливает элементы (прогрессбар), восстанавливает позиции.
+  - Сохранение проекта в JSON: base_path, atlas_density/size/show_grid/resample/mip_flood/settings, textures{} с masks[], items[] с позициями. Перед перезаписью делает ротацию бэкапов `*_back_1..4.json` рядом с файлом. При загрузке нормализует legacy поля, пересэмпливает элементы (прогрессбар), восстанавливает позиции.
   - Path Aliases: файл `~/.texture_processor_aliases.json`, формат `{stored_prefix: local_prefix}`; resolve_path сначала разворачивает переменные окружения, затем пытается заменить самый длинный подходящий префикс на локальный.
-- ui/browser_widget.py и editor/canvas используют `QGraphicsView` для интерактивной работы; статус-бар показывает координаты/zoom/плотность.
+- ui/browser_widget.py: список изображений из выбранной папки (png/jpg/jpeg/tga/bmp) с превью 64×64; сигнал `image_selected(filepath)`.
+- ui/browser_widget.py и редактор/канва используют `QGraphicsView` для интерактивной работы; статус-бар показывает координаты/zoom/плотность.
 
 ## Поток работы (UI)
 1) Open папку → список превью.

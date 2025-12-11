@@ -3,7 +3,7 @@ import math
 import numpy as np
 import sys
 from pathlib import Path
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel, QMenu
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image, ImageChops
@@ -29,6 +29,20 @@ class AtlasItem(QGraphicsPixmapItem):
         self.real_width = None
         self.original_width = None
         self.mask_id = None
+        self.locked = False
+
+    def set_locked(self, locked: bool):
+        """Lock/unlock item movement on the canvas."""
+        self.locked = bool(locked)
+        self.setFlag(QGraphicsItem.ItemIsMovable, not self.locked)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+        action = menu.addAction("Unlock movement" if self.locked else "Lock movement")
+        chosen = menu.exec(event.screenPos())
+        if chosen == action:
+            self.set_locked(not self.locked)
+        event.accept()
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange:
@@ -46,8 +60,9 @@ class AtlasItem(QGraphicsPixmapItem):
         if scene and getattr(scene, "exporting", False):
             return
 
-        # Draw border in editor view
-        pen = QPen(Qt.blue, 0, Qt.DashLine) # Width 0 = Cosmetic (1px on screen)
+        # Draw border in editor view (locked items are black, otherwise blue)
+        border_color = Qt.black if self.locked else Qt.blue
+        pen = QPen(border_color, 0, Qt.DashLine) # Width 0 = Cosmetic (1px on screen)
         painter.setPen(pen)
         painter.drawRect(self.boundingRect())
         

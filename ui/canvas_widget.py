@@ -3,7 +3,7 @@ import math
 import numpy as np
 import sys
 from pathlib import Path
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel, QMenu
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QGraphicsPixmapItem, QGraphicsItem, QProgressDialog, QApplication, QSizePolicy, QLabel, QMenu, QFileDialog, QMessageBox
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPolygonF, QColor, QBrush, QImage, QPen
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PIL import Image, ImageChops
@@ -36,12 +36,41 @@ class AtlasItem(QGraphicsPixmapItem):
         self.locked = bool(locked)
         self.setFlag(QGraphicsItem.ItemIsMovable, not self.locked)
 
+    def export_to_png(self):
+        """Export current pixmap (already resampled/masked) to a PNG file."""
+        pixmap = self.pixmap()
+        if pixmap.isNull():
+            return
+        parent = None
+        scene = self.scene()
+        if scene and scene.views():
+            parent = scene.views()[0]
+        stem = "fragment"
+        src_path = self.original_filepath or self.filepath
+        if src_path:
+            try:
+                stem = Path(src_path).stem
+            except Exception:
+                pass
+        suffix = f"_mask{self.mask_id}" if self.mask_id is not None else ""
+        suggested = str(Path(src_path).with_name(f"{stem}{suffix}.png")) if src_path else f"{stem}{suffix}.png"
+        filepath, _ = QFileDialog.getSaveFileName(parent, "Export Fragment", suggested, "PNG Files (*.png)")
+        if not filepath:
+            return
+        if not filepath.lower().endswith(".png"):
+            filepath += ".png"
+        if not pixmap.save(filepath, "PNG") and parent:
+            QMessageBox.warning(parent, "Export Failed", "Could not save PNG.")
+
     def contextMenuEvent(self, event):
         menu = QMenu()
-        action = menu.addAction("Unlock movement" if self.locked else "Lock movement")
+        action_lock = menu.addAction("Unlock movement" if self.locked else "Lock movement")
+        action_export = menu.addAction("Export to PNG...")
         chosen = menu.exec(event.screenPos())
-        if chosen == action:
+        if chosen == action_lock:
             self.set_locked(not self.locked)
+        elif chosen == action_export:
+            self.export_to_png()
         event.accept()
 
     def itemChange(self, change, value):

@@ -9,6 +9,9 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QRadioButton, QSpinB
 from .browser_widget import BrowserWidget
 from .editor_widget import EditorWidget
 from .canvas_widget import CanvasWidget, AtlasItem
+from core.project_settings import normalize_project_settings
+from core.project_store import normalize_loaded_project, prepare_for_save
+from core.mask_service import remove_mask_entry, upsert_mask_entry
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -157,6 +160,8 @@ class MainWindow(QMainWindow):
             'kaiser_radius': 2,
             'atlas_density': 512.0,
             'atlas_size': 2048,
+            'scale_reference_length': 1.0,
+            'scale_reference_unit': 'm',
             'mip_flood': False,
             'mip_flood_levels': 6,
             'mip_flood_auto': True
@@ -292,6 +297,16 @@ class MainWindow(QMainWindow):
         self.canvas.mip_flood_levels = 0 if auto else self.mip_levels_spin.value()
         self.project_data['mip_flood_auto'] = auto
 
+    @staticmethod
+    def normalize_scale_reference_unit(unit_key):
+        settings = normalize_project_settings({"scale_reference_unit": unit_key})
+        return settings["scale_reference_unit"]
+
+    @staticmethod
+    def normalize_scale_reference_length(length_value):
+        settings = normalize_project_settings({"scale_reference_length": length_value})
+        return settings["scale_reference_length"]
+
     def on_image_selected(self, filepath):
         print(f"Selected: {filepath}")
         self.capture_current_guides()
@@ -339,30 +354,15 @@ class MainWindow(QMainWindow):
             else:
                 mask_id = self.editor.current_mask_id
 
-        # Update existing mask or create new
-        existing = None
-        for m in tex_entry['masks']:
-            if m.get('id') == mask_id:
-                existing = m
-                break
-
-        if existing:
-            existing['points'] = points
-            existing['real_width'] = real_width
-            existing['original_width'] = original_width
-            if not existing.get('color'):
-                existing['color'] = self.generate_mask_color(mask_id)
-        else:
-            # Assign new id
-            next_id = max([m.get('id', 0) for m in tex_entry['masks']] + [0]) + 1
-            mask_id = next_id
-            tex_entry['masks'].append({
-                'id': mask_id,
-                'points': points,
-                'real_width': real_width,
-                'original_width': original_width,
-                'color': self.generate_mask_color(mask_id)
-            })
+        updated_masks, mask_id = upsert_mask_entry(
+            tex_entry.get('masks', []),
+            mask_id=mask_id,
+            points=points,
+            real_width=real_width,
+            original_width=original_width,
+            color_factory=self.generate_mask_color,
+        )
+        tex_entry['masks'] = updated_masks
 
         def _same_path(a, b):
             try:
@@ -423,8 +423,7 @@ class MainWindow(QMainWindow):
         for it in selected:
             tex_entry = self.project_data['textures'].get(it.filepath)
             if tex_entry:
-                masks = tex_entry.get('masks', [])
-                tex_entry['masks'] = [m for m in masks if m.get('id') != it.mask_id]
+                tex_entry['masks'] = remove_mask_entry(tex_entry.get('masks', []), it.mask_id)
             self.canvas.scene.removeItem(it)
 
     def save_project(self):
@@ -440,6 +439,12 @@ class MainWindow(QMainWindow):
             self.project_data['mip_flood'] = self.mip_flood_chk.isChecked()
             self.project_data['mip_flood_levels'] = self.mip_levels_spin.value()
             self.project_data['mip_flood_auto'] = self.mip_levels_auto.isChecked()
+            self.project_data['scale_reference_length'] = self.normalize_scale_reference_length(
+                self.editor.scale_length_input.value()
+            )
+            self.project_data['scale_reference_unit'] = self.normalize_scale_reference_unit(
+                self.editor.scale_unit_combo.currentData()
+            )
             # Capture item positions
             items_data = []
             for it in self.canvas.scene.items():
@@ -451,6 +456,11 @@ class MainWindow(QMainWindow):
                         'y': it.pos().y()
                     })
             self.project_data['items'] = items_data
+            self.project_data = prepare_for_save(
+                self.project_data,
+                scale_reference_length=self.editor.scale_length_input.value(),
+                scale_reference_unit=self.editor.scale_unit_combo.currentData(),
+            )
             with open(filepath, 'w') as f:
                 json.dump(self.project_data, f, indent=4)
 
@@ -488,7 +498,7 @@ class MainWindow(QMainWindow):
         
         if filepath:
             with open(filepath, 'r') as f:
-                self.project_data = json.load(f)
+                self.project_data = normalize_loaded_project(json.load(f))
 
             # Normalize legacy texture data to new masks list
             textures = self.project_data.get('textures', {})
@@ -516,6 +526,19 @@ class MainWindow(QMainWindow):
             
             # Restore settings
             self.density_input.setValue(self.project_data.get('atlas_density', 512.0))
+
+            scale_len = self.normalize_scale_reference_length(
+                self.project_data.get('scale_reference_length', 1.0)
+            )
+            scale_unit = self.normalize_scale_reference_unit(
+                self.project_data.get('scale_reference_unit', 'm')
+            )
+            self.editor.scale_length_input.setValue(scale_len)
+            unit_index = self.editor.scale_unit_combo.findData(scale_unit)
+            if unit_index < 0:
+                unit_index = self.editor.scale_unit_combo.findData("m")
+            if unit_index >= 0:
+                self.editor.scale_unit_combo.setCurrentIndex(unit_index)
             
             atlas_size = self.project_data.get('atlas_size', 2048)
             self.size_combo.setCurrentText(str(atlas_size))

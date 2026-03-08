@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QPolygonF, QBrush, QAction, QPainterPath, QPainterPathStroker, QGuiApplication
 from PySide6.QtCore import Qt, QPointF, Signal, QRectF, QLineF
 from .view_utils import ZoomPanView
+from core.scale_reference import ScaleReference
 
 class HandleItem(QGraphicsEllipseItem):
     def __init__(self, x, y, r, parent=None):
@@ -308,12 +309,19 @@ class EditorWidget(QWidget):
         self.scale_length_input.setRange(0.01, 10000.0)
         self.scale_length_input.setValue(1.0)
         self.scale_length_input.setPrefix("Len: ")
-        self.scale_length_input.setSuffix(" m")
-        self.scale_length_input.setMaximumWidth(140)
+        self.scale_length_input.setMaximumWidth(120)
         controls_layout.addWidget(self.scale_length_input)
+
+        self.scale_unit_combo = QComboBox()
+        self.scale_unit_combo.addItem("1 m", "m")
+        self.scale_unit_combo.addItem("10 cm", "cm10")
+        self.scale_unit_combo.addItem("1 cm", "cm1")
+        self.scale_unit_combo.setCurrentIndex(0)
+        self.scale_unit_combo.setMaximumWidth(90)
+        controls_layout.addWidget(self.scale_unit_combo)
         
         self.width_input = QDoubleSpinBox()
-        self.width_input.setRange(0.1, 1000.0)
+        self.width_input.setRange(0.001, 1000.0)
         self.width_input.setValue(1.0)
         self.width_input.setSuffix(" m")
         self.width_input.setPrefix("Width: ")
@@ -828,7 +836,8 @@ class EditorWidget(QWidget):
             length_px = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
             if length_px > 0:
                 self.push_state()
-                ref_m = max(0.01, self.scale_length_input.value())
+                unit_key = self.scale_unit_combo.currentData() if self.scale_unit_combo else "m"
+                ref_m = max(1e-6, self.scale_length_to_meters(self.scale_length_input.value(), unit_key))
                 self.px_per_meter = length_px / ref_m
                 # Visual line
                 if self.scale_line:
@@ -1132,6 +1141,10 @@ class EditorWidget(QWidget):
             return
         real_width = width_px / self.px_per_meter
         self.width_input.setValue(real_width)
+
+    @staticmethod
+    def scale_length_to_meters(length_value, unit_key):
+        return ScaleReference(length_value=length_value, unit_key=unit_key).to_meters()
 
     def apply_mask(self):
         if len(self.points) < 3:

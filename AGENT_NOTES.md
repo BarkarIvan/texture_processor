@@ -13,11 +13,16 @@ pip install -r requirements.txt
 
 ## Архитектура
 - main.py: создаёт QApplication, задаёт дефолтный шрифт, показывает MainWindow.
-- core/: простые dataclass’ы `Mask/Texture/AtlasItem/Project` для сериализации (UI сейчас хранит состояние в dict `project_data`).
+- core/:
+  - dataclass’ы `Mask/Texture/AtlasItem/Project` для сериализации;
+  - `scale_reference.py` — единая конвертация длины эталона в метры (`m/cm10/cm1`);
+  - `project_settings.py` — нормализация/дефолты проектных настроек;
+  - `project_store.py` — подготовка данных к save/load и нормализация загруженного JSON;
+  - `mask_service.py` — чистые операции upsert/remove масок в `textures[*].masks`.
 - ui/view_utils.py: `ZoomPanView` (колёсико = zoom, middle drag = pan, сигналы clicked/mouseMoved/leftReleased/hoverMoved).
 - ui/browser_widget.py: список изображений из выбранной папки (png/jpg/jpeg/tga/bmp) с превью 64×64; сигнал `image_selected(filepath)`.
 - ui/editor_widget.py: канва для разметки маски.
-  - Инструменты: Polygon (по умолчанию), Rect (Shift делает квадрат), Set Scale (2 клика — задаёт px_per_meter).
+  - Инструменты: Polygon (по умолчанию), Rect (Shift делает квадрат), Set Scale (2 клика + выбор единицы 1m/10cm/1cm — задаёт px_per_meter).
   - Точки — `HandleItem` с контекстным Delete, Shift при добавлении/движении выравнивает по соседям/осям; Ctrl+drag на многоугольнике двигает маску целиком; контекст на полигонах — Add Point Here.
   - Undo/Redo стеками точек/ширины; линия масштаба не восстанавливается.
   - `mask_applied` сигнал: filepath, points, real_width, original_width (ширина bbox), item_ref, mask_id.
@@ -32,9 +37,9 @@ pip install -r requirements.txt
   - `generate_obj` собирает OBJ: один объект на маску, вершины в метрах (px/atlas_density) с +Y вверх, UV нормализованы к атласу с origin снизу-слева, сортировка по mask_id/пути/позиции для детерминизма.
 - ui/main_window.py: соединяет все виджеты, хранит `project_data`, тулбар с плотностью/размером/сеткой, ресемплингом, Duplicate/Delete, Export PNG/OBJ, Path Aliases, Mip Flood, Fit/Center.
   - Выбор изображения -> editor (с сохранением px_per_meter).
-  - Apply/Update маски: создаёт/обновляет mask_id на текстуре, кладёт фрагмент на атлас.
+  - Apply/Update маски: создаёт/обновляет mask_id через `core.mask_service.upsert_mask_entry`, кладёт фрагмент на атлас.
   - Duplicate создаёт новый mask_id и элемент со смещением; Delete убирает элемент и маску.
-  - Сохранение проекта в JSON: base_path, atlas_density/size/show_grid/resample/mip_flood/settings, textures{} с masks[], items[] с позициями. Перед перезаписью делает ротацию бэкапов `*_back_1..4.json` рядом с файлом. При загрузке нормализует legacy поля, пересэмпливает элементы (прогрессбар), восстанавливает позиции.
+  - Сохранение/загрузка проекта: подготовка через `core.project_store.prepare_for_save` / `normalize_loaded_project`; хранит base_path, atlas_density/size/show_grid/resample/mip_flood/settings, scale_reference_length/unit, textures{} с masks[], items[] с позициями. Перед перезаписью делает ротацию бэкапов `*_back_1..4.json` рядом с файлом.
   - Path Aliases: файл `~/.texture_processor_aliases.json`, формат `{stored_prefix: local_prefix}`; resolve_path сначала разворачивает переменные окружения, затем пытается заменить самый длинный подходящий префикс на локальный.
 - ui/browser_widget.py: список изображений из выбранной папки (png/jpg/jpeg/tga/bmp) с превью 64×64; сигнал `image_selected(filepath)`.
 - ui/browser_widget.py и редактор/канва используют `QGraphicsView` для интерактивной работы; статус-бар показывает координаты/zoom/плотность.
@@ -43,7 +48,7 @@ pip install -r requirements.txt
 1) Open папку → список превью.
 2) Выбор изображения → редактор.
 3) Маска Polygon/Rect (Shift выравнивает, Ctrl+drag двигает всю маску, контекстное Add/Delete Point). При необходимости выбрать существующую маску в списке или создать новую.
-4) Set Scale: 2 точки + длина в метрах → обновляет px_per_meter и width_input.
+4) Set Scale: 2 точки + длина и единица (1m/10cm/1cm) → обновляет px_per_meter и width_input.
 5) Опционально добавить направляющие (H/V); точки маски снапятся к ближайшим.
 6) Apply Mask → сохраняет в textures[filepath].masks и добавляет/обновляет элемент на атласе.
 7) Настроить плотность/размер/ресемплинг, при необходимости Duplicate/Delete.
@@ -61,7 +66,8 @@ pip install -r requirements.txt
   - `textures`: {filepath: {px_per_meter, masks:[{id, points, real_width, original_width, color}]}}
   - `items`: [{filepath, mask_id, x, y}]
   - `atlas_density`, `atlas_size`, `show_grid`, `resample_mode`, `kaiser_beta`, `kaiser_radius`,
-    `mip_flood`, `mip_flood_levels`, `mip_flood_auto`, `base_path`
+    `mip_flood`, `mip_flood_levels`, `mip_flood_auto`, `base_path`,
+    `scale_reference_length`, `scale_reference_unit`
 - Алиасы путей: `~/.texture_processor_aliases.json`, плюс подстановка env vars (например `$DROPBOX`).
 
 ## Заметки для доработок
